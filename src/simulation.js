@@ -123,7 +123,7 @@ export class Simulation {
       if (car.stopCountdown > 0) car.stopCountdown = Math.max(0, car.stopCountdown - dt);
       const from = car.path[car.node];
       const dirX = next.x - from.x, dirY = next.y - from.y;
-      car.facing = Math.atan2(dirY, dirX);
+      // Heading is calculated from the curved road trajectory in position().
       if (car.t < .42 && !this.canEnter(car, next, occupancy)) { car.wait = true; continue; }
       const multiplier = next.modifier === 'express' ? 1.65 : next.modifier === 'roundabout' ? 1.18 : 1;
       car.t += dt * car.speed * multiplier;
@@ -136,13 +136,42 @@ export class Simulation {
     }
     this.getOccupancy();
   }
+  // Round corners by blending the incoming and outgoing road directions.
+  // Each segment keeps its endpoints at tile centers, but uses continuous
+  // Hermite tangents so cars steer into turns instead of snapping 90 degrees.
   position(car) {
     if (car.path.length) {
-      const a = car.path[car.node], b = car.path[car.node+1] || a;
-      if (a) return { x: a.x + (b.x-a.x) * car.t, y: a.y + (b.y-a.y)*car.t };
+      const nodes = car.path;
+      const i = Math.min(car.node, nodes.length - 1);
+      const a = nodes[i], b = nodes[i + 1];
+      if (a && b) {
+        const prev = nodes[Math.max(0, i - 1)];
+        const after = nodes[Math.min(nodes.length - 1, i + 2)];
+        const tangent = (before, center, next) => {
+          const inX = center.x - before.x, inY = center.y - before.y;
+          const outX = next.x - center.x, outY = next.y - center.y;
+          if (!inX && !inY) return { x: outX, y: outY };
+          if (!outX && !outY) return { x: inX, y: inY };
+          return { x: (inX + outX) * .5, y: (inY + outY) * .5 };
+        };
+        const m0 = tangent(prev, a, b);
+        const m1 = tangent(a, b, after);
+        const t = Math.max(0, Math.min(1, car.t));
+        const t2 = t*t, t3 = t2*t;
+        const h00 = 2*t3-3*t2+1, h10 = t3-2*t2+t;
+        const h01 = -2*t3+3*t2, h11 = t3-t2;
+        const x = h00*a.x + h10*m0.x + h01*b.x + h11*m1.x;
+        const y = h00*a.y + h10*m0.y + h01*b.y + h11*m1.y;
+        const dx = (6*t2-6*t)*a.x + (3*t2-4*t+1)*m0.x + (-6*t2+6*t)*b.x + (3*t2-2*t)*m1.x;
+        const dy = (6*t2-6*t)*a.y + (3*t2-4*t+1)*m0.y + (-6*t2+6*t)*b.y + (3*t2-2*t)*m1.y;
+        const angle = Math.atan2(dy, dx);
+        car.facing = angle;
+        return { x, y, angle };
+      }
+      if (a) return { x:a.x, y:a.y, angle:car.facing };
     }
     const r = this.city.roads.get(car.road);
-    return r ? {x:r.x,y:r.y} : null;
+    return r ? {x:r.x,y:r.y,angle:car.facing} : null;
   }
   stats() {
     const active = this.cars.filter(c => c.road).length;
