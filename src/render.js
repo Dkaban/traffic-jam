@@ -184,7 +184,7 @@ export class Renderer {
     const c=this.ctx,S=TILE;
     for(const car of sim.cars){
       const p=sim.position(car);if(!p)continue;
-      const angle=car.facing;
+      const angle=p.angle ?? car.facing;
       const lane=3.4;
       const x=(p.x+.5)*S + -Math.sin(angle)*lane;
       const y=(p.y+.5)*S + Math.cos(angle)*lane;
