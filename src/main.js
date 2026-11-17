@@ -141,6 +141,16 @@ const help=$('#help-dialog');
 $('#help-btn').addEventListener('click',()=>help.showModal());
 $('#close-help').addEventListener('click',()=>help.close());
 $('#play-btn').addEventListener('click',()=>help.close());
+$('#restart-btn').addEventListener('click',()=>{
+  if(!window.confirm('Reset to the original starter city? Your current layout will be replaced.')) return;
+  remember(city.serialize());
+  city=new City();
+  sim.reset(city);
+  save();
+  renderer.fit();
+  updateZoom();
+  toast('Starter city restored.');
+});
 $('#reset-btn').addEventListener('click',()=>{
   if(!window.confirm('Start a new empty city? This replaces your saved map.')) return;
   remember(city.serialize());city=new City(false);sim.reset(city);save();renderer.fit();updateZoom();toast('New city! Draw your first road.');
