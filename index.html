@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#121b20" />
+  <meta name="description" content="Traffic Jam — a little living city, shaped by the roads you build." />
+  <title>Traffic Jam — Build the roads. Beat the rush.</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg" />
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <header class="brand"><div class="brand-symbol"><span class="street-h"></span><span class="street-v"></span><span class="car-dot"></span></div><div><h1>TRAFFIC<span>JAM</span></h1><p>THE LITTLE CITY SIM</p></div></header>
+      <div class="sidebar-scroll">
+        <div class="sidebar-intro"><div class="live-dot"></div><span>YOUR CITY IS ALIVE</span></div>
+        <div class="section-caption">DESIGN YOUR CITY</div>
+        <div class="tool-grid">
+          <button class="tool selected" data-tool="road" title="Draw roads · 1"><span class="tool-icon road-art">━╋━</span><span>Road</span><small>1</small></button>
+          <button class="tool" data-tool="house" title="Place a house · 2"><span class="tool-icon">⌂</span><span>House</span><small>2</small></button>
+          <button class="tool" data-tool="apartment" title="Place apartments · 3"><span class="tool-icon">▦</span><span>Apartments</span><small>3</small></button>
+          <button class="tool" data-tool="office" title="Place an office · 4"><span class="tool-icon">▥</span><span>Office</span><small>4</small></button>
+          <button class="tool" data-tool="shop" title="Place shops · 5"><span class="tool-icon">▤</span><span>Shops</span><small>5</small></button>
+          <button class="tool" data-tool="bulldoze" title="Remove roads or buildings · X"><span class="tool-icon">⌫</span><span>Bulldoze</span><small>X</small></button>
+        </div>
+        <div class="section-caption section-caption-spaced">CONTROL THE FLOW</div>
+        <div class="modifier-list">
+          <button class="modifier" data-tool="signal"><span class="modifier-icon signal-icon">🚦</span><span class="modifier-copy"><strong>Traffic light</strong><small>Alternating right of way</small></span><span class="modifier-key">6</span></button>
+          <button class="modifier" data-tool="stop"><span class="modifier-icon stop-icon">STOP</span><span class="modifier-copy"><strong>Stop sign</strong><small>Slow every approaching car</small></span><span class="modifier-key">7</span></button>
+          <button class="modifier" data-tool="express"><span class="modifier-icon express-icon">»</span><span class="modifier-copy"><strong>Fast lane</strong><small>Cars move 65% faster</small></span><span class="modifier-key">8</span></button>
+          <button class="modifier" data-tool="oneway"><span class="modifier-icon oneway-icon">➜</span><span class="modifier-copy"><strong>One-way</strong><small>Press R to rotate direction</small></span><span class="modifier-key">9</span></button>
+          <button class="modifier" data-tool="roundabout"><span class="modifier-icon roundabout-icon">↻</span><span class="modifier-copy"><strong>Roundabout</strong><small>Smooth intersection traffic</small></span><span class="modifier-key">0</span></button>
+          <button class="modifier" data-tool="normal"><span class="modifier-icon normal-icon">×</span><span class="modifier-copy"><strong>Clear modifier</strong><small>Return road to normal</small></span></button>
+        </div>
+        <div class="side-tip"><span>✦</span><p><strong>City planner tip</strong><br />Buildings need a road next door. Apartments create five cars at once — plan ahead!</p></div>
+      </div>
+      <div class="sidebar-footer"><button id="grow-btn" class="grow-btn">✚ &nbsp;Grow the neighborhood</button><button id="reset-btn" class="text-button">New city ↗</button></div>
+    </aside>
+    <main class="game-area">
+      <div class="topbar">
+        <div class="heading"><div class="eyebrow">YOUR CITY <span class="slash">/</span> LIVE SIMULATION</div><h2>Keep things moving<span class="title-period">.</span></h2></div>
+        <div class="top-actions"><button class="pill-button" id="help-btn" title="How to play">?<span class="desktop-label">&nbsp; How to play</span></button><button class="pill-button" id="heat-btn" title="Toggle traffic heatmap">◉ <span class="desktop-label">Heatmap</span></button><button class="pill-button" id="fit-btn" title="Fit map to screen">⛶</button></div>
+      </div>
+      <section class="statbar" aria-label="Traffic statistics">
+        <div class="stat"><span class="stat-icon mint">↗</span><div class="stat-data"><strong id="stat-flow">100<span>%</span></strong><small>TRAFFIC FLOW</small></div></div>
+        <div class="stat"><span class="stat-icon lilac">▤</span><div class="stat-data"><strong id="stat-buildings">0</strong><small>BUILDINGS</small></div></div>
+        <div class="stat"><span class="stat-icon orange">▰</span><div class="stat-data"><strong id="stat-cars">0</strong><small>VEHICLES</small></div></div>
+        <div class="stat"><span class="stat-icon red">◷</span><div class="stat-data"><strong id="stat-queued">0</strong><small>IN TRAFFIC</small></div></div>
+        <div class="stat stat-last"><span class="stat-icon blue">✓</span><div class="stat-data"><strong id="stat-trips">0</strong><small>TRIPS FINISHED</small></div></div>
+      </section>
+      <div class="canvas-shell" id="canvas-shell">
+        <canvas id="game-canvas" aria-label="Interactive traffic simulation map"></canvas>
+        <div class="canvas-badge"><span class="live-dot"></span><span>SIMULATION RUNNING</span></div>
+        <div class="road-hint" id="road-hint">✎ &nbsp;Click & drag to draw roads</div>
+        <div class="compass">N <span>↑</span></div>
+        <div class="canvas-bottom"><div class="zoom-controls"><button id="zoom-out" title="Zoom out">−</button><span id="zoom-label">100%</span><button id="zoom-in" title="Zoom in">+</button></div><span class="canvas-instructions">Scroll to zoom &nbsp;·&nbsp; Right-drag to pan &nbsp;·&nbsp; Space + drag to pan</span></div>
+      </div>
+      <footer class="bottom-bar"><div class="footer-message"><span class="pulse-dot"></span><span id="city-message">A good city starts with a good road.</span></div><div class="sim-actions"><span class="sim-label">SIM SPEED</span><div class="speed-switch"><button data-speed="1" class="active">1×</button><button data-speed="2">2×</button><button data-speed="3">3×</button></div><button id="pause-btn" class="pause-btn" title="Pause simulation">Ⅱ <span>Pause</span></button></div></footer>
+    </main>
+  </div>
+  <dialog id="help-dialog"><div class="dialog-top"><span class="dialog-badge">TRAFFIC JAM / GUIDE</span><button id="close-help" class="dialog-close">✕</button></div><h2>Build a city.<br /><em>Keep it moving.</em></h2><p>Draw a connected road network and place homes and businesses alongside it. Every building adds cars that travel to other destinations, and busy roads can become bottlenecks.</p><div class="help-grid"><div><b>01</b><strong>Draw roads</strong><span>Choose Road and drag across the map. Intersections connect automatically.</span></div><div><b>02</b><strong>Add destinations</strong><span>Place buildings next to roads. Apartments produce five vehicles each.</span></div><div><b>03</b><strong>Manage traffic</strong><span>Select a modifier and click a road. Try faster routes and one-way systems.</span></div><div><b>04</b><strong>Watch the flow</strong><span>Monitor queues, finished trips, and congestion in Heatmap mode.</span></div></div><p class="help-keyboard">SHORTCUTS &nbsp; 1–5 build &nbsp;·&nbsp; 6–0 modifiers &nbsp;·&nbsp; X bulldoze &nbsp;·&nbsp; R rotate &nbsp;·&nbsp; Space + drag pan &nbsp;·&nbsp; Ctrl/⌘ + Z undo</p><button id="play-btn" class="dialog-play">LET'S BUILD →</button></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
