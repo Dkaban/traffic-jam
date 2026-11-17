@@ -1,0 +1,11 @@
+{
+  "name": "traffic-jam",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A little living traffic city simulator",
+  "scripts": {
+    "test": "node --test",
+    "start": "python3 -m http.server 8080"
+  }
+}
