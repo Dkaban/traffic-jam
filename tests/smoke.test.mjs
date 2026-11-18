@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { City } from '../src/world.js';
+import { BUILDINGS, City } from '../src/world.js';
 import { Simulation } from '../src/simulation.js';
 
 test('starter city has connected roads, residents and destinations', () => {
@@ -9,7 +9,10 @@ test('starter city has connected roads, residents and destinations', () => {
   assert.ok(city.buildingCount() > 10);
   assert.ok(city.cityStats().population > 0);
   assert.ok(city.cityStats().jobs > 0);
-  assert.ok([...city.buildings.values()].every(building => city.connected(building)));
+  assert.ok([...city.buildings.values()].every(building => BUILDINGS[building.type].service || city.connected(building)));
+  for (const count of Object.values(city.utilityCoverage().served)) {
+    assert.ok(count > 0 && count < city.buildingCount());
+  }
 });
 
 test('roads route between connections, and one-ways constrain pathfinding', () => {
@@ -25,11 +28,12 @@ test('a legacy city save preserves roads, buildings and modifiers', () => {
   const city = new City();
   city.setModifier(8, 7, 'oneway', 'n');
   const { roads, buildings, nextId } = JSON.parse(JSON.stringify(city.serialize()));
-  const loaded = City.fromJSON({ roads, buildings, nextId });
+  const legacyBuildings = buildings.filter(building => !BUILDINGS[building.type].service);
+  const loaded = City.fromJSON({ roads, buildings: legacyBuildings, nextId });
   assert.equal(loaded.road(8, 7).direction, 'n');
-  assert.equal(loaded.buildingCount(), city.buildingCount());
+  assert.equal(loaded.buildingCount(), legacyBuildings.length);
   assert.equal(loaded.cityStats().population, city.cityStats().population);
-  assert.equal(loaded.cityStats().used, 0);
+  assert.deepEqual(loaded.utilityCoverage().served, { power: 0, water: 0 });
   assert.equal(loaded.zones.size, 0);
 });
 

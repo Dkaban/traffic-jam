@@ -27,11 +27,10 @@
   color: #b5c5c4;
   font-size: 12px;
 }
-.demand-stats, .capacity-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 14px; }
+.demand-stats, .utility-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 14px; }
 .city-stats strong, .city-stats output { color: #edf4ef; font-weight: 700; }
 .city-stats abbr { text-decoration: none; font-weight: 800; }
 .city-stats .no-demand output { color: #91a6a2; }
-.city-stats .at-capacity strong { color: #ffd284; }
 .footer-message span:last-child { overflow: visible; white-space: normal; }
 
 .utility-toggle[data-utility="power"], .utility-legend[data-service="power"] { --utility-color: #f4bb6d; }
@@ -53,7 +52,6 @@
 .utility-toggle[aria-pressed="true"] { background: #304043; box-shadow: inset 0 -2px var(--utility-color); }
 .utility-toggle strong { margin-left: 4px; font-variant-numeric: tabular-nums; }
 .utility-legend {
-  --utility-warning: #f5a861;
   flex: none;
   padding: 9px 14px;
   margin: -4px 0 10px;
@@ -78,13 +76,26 @@
   font-weight: 800;
   line-height: 1;
 }
-.utility-mark-available { border-style: dashed; }
-.utility-mark-waiting {
-  border-color: var(--utility-warning);
-  background: repeating-linear-gradient(135deg, transparent 0 3px, var(--utility-warning) 3px 4px);
+.utility-mark-preview { border-style: dashed; }
+.utility-alert-key {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: #182428;
 }
-.utility-mark-source { border-width: 2px; }
-.utility-mark-disconnected { border-color: var(--utility-warning); border-style: dashed; color: var(--utility-warning); }
+.utility-alert-power { color: #f4bb6d; font-weight: 800; line-height: 1; }
+.utility-alert-water { color: #7ec9ed; }
+.utility-alert-water::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 0 50% 50%;
+  background: currentColor;
+  transform: rotate(45deg);
+}
 
 @media (max-width: 850px) {
   .tool-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; }
@@ -101,7 +112,7 @@
   .game-area { height: auto; flex: 1; min-height: 415px; }
   .canvas-shell { min-height: 255px; }
   .city-stats { margin: 0 0 8px; padding: 7px 8px; font-size: 11px; }
-  .demand-stats, .capacity-stats { gap: 4px 7px; }
+  .demand-stats, .utility-stats { gap: 4px 7px; }
   .utility-toggle { min-height: 36px; }
   .utility-legend { margin-top: 0; padding: 7px 8px; }
 }
