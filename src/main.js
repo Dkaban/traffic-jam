@@ -14,6 +14,7 @@ try {
 const sim = new Simulation(city);
 const state = { tool:'road', direction:'e', heatmap:false, utility:null, hover:null, dragCells:[] };
 const undoStack = [];
+let citySession = Symbol('city');
 let painting = null, panning = false, spaceHeld = false, dragBefore = null, lastCell = null;
 let lastPoint = null, speed = 1, paused = false, lastFrame = performance.now(), lastStats = 0;
 let toastTimer;
@@ -30,12 +31,25 @@ function toast(message) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
 }
 function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(city.serialize())); } catch { /* Storage may be disabled */ } }
-function remember(before) { undoStack.push(before); if(undoStack.length>40) undoStack.shift(); save(); }
+function remember(before) {
+  undoStack.push({ before, citySession });
+  if(undoStack.length>40) undoStack.shift();
+  save();
+}
 function undo() {
   cancelUtilityPlacement();
   const previous = undoStack.pop();
   if(!previous) {toast('Nothing to undo yet');return;}
-  city=City.fromJSON(previous);
+  const restored=City.fromJSON(previous.before);
+  if (citySession === previous.citySession) {
+    for (const home of restored.buildings.values()) {
+      if (!home.awaitingResidents) continue;
+      const current=city.building(home.x,home.y);
+      if (current?.id===home.id && current.type===home.type && !current.awaitingResidents) restored.moveIn(home);
+    }
+  }
+  city=restored;
+  citySession=previous.citySession;
   sim.reset(city); save(); toast('Last edit undone');
 }
 function updateUtilityStats() {
@@ -121,6 +135,7 @@ function commit(action) {
     if (!city.road(x,y)) { toast('Place modifiers on a road'); return; }
     changed=city.setModifier(x,y,action==='normal'?'none':action,state.direction);
   }
+  if (!changed && city.road(x,y)?.highway) toast('The highway junction is permanent');
   if(changed){
     remember(before);
     if (!BUILDINGS[action]?.service) sim.networkChanged();
@@ -229,6 +244,12 @@ function updateZoom(){ $('#zoom-label').textContent=`${Math.round(renderer.camer
 $('#zoom-in').addEventListener('click',()=>{renderer.zoomAt(renderer.w/2,renderer.h/2,1.2);updateZoom();});
 $('#zoom-out').addEventListener('click',()=>{renderer.zoomAt(renderer.w/2,renderer.h/2,1/1.2);updateZoom();});
 $('#fit-btn').addEventListener('click',()=>{renderer.fit();updateZoom();});
+$('#highway-btn').addEventListener('click',()=>{
+  const junction=city.highwayJunction();
+  if (!junction) { toast('Clear a tile at the map edge for highway access'); return; }
+  renderer.focus(junction);
+  updateZoom();
+});
 $('#heat-btn').addEventListener('click',()=>{state.heatmap=!state.heatmap;$('#heat-btn').classList.toggle('on',state.heatmap);toast(state.heatmap?'Traffic heatmap on':'Traffic heatmap off');});
 $('#pause-btn').addEventListener('click',()=>{
   paused=!paused;
@@ -249,6 +270,7 @@ $('#restart-btn').addEventListener('click',()=>{
   cancelUtilityPlacement();
   remember(city.serialize());
   city=new City();
+  citySession=Symbol('city');
   sim.reset(city);
   save();
   renderer.fit();
@@ -258,7 +280,11 @@ $('#restart-btn').addEventListener('click',()=>{
 $('#reset-btn').addEventListener('click',()=>{
   if(!window.confirm('Start a new empty city? This replaces your saved map.')) return;
   cancelUtilityPlacement();
-  remember(city.serialize());city=new City(false);sim.reset(city);save();renderer.fit();updateZoom();toast('New city! Draw your first road.');
+  remember(city.serialize());
+  city=new City(false);
+  citySession=Symbol('city');
+  sim.reset(city);save();renderer.fit();updateZoom();
+  toast('New city! Draw a road from the highway junction.');
 });
 function rotateOneWay() {
   const current=DIRECTIONS.findIndex(d=>d.id===state.direction);
@@ -286,6 +312,7 @@ window.addEventListener('blur',()=>{spaceHeld=false;pointerEnd();});
 function updateStats(){
   const s=sim.stats();
   const cityStats=city.cityStats();
+  const arrivals=sim.arrivalStatus();
   const development=city.nextDevelopment(cityStats);
   $('#stat-flow').innerHTML=`${s.flow}<span>%</span>`;
   $('#stat-population').textContent=cityStats.population.toLocaleString();
@@ -298,8 +325,12 @@ function updateStats(){
     output.parentElement.classList.toggle('no-demand', !cityStats.demand[type]);
   }
   updateUtilityStats();
-  $('#city-message').textContent = development.blocked ||
-    (!s.roads ? 'Draw a road to start your city.'
+  $('#city-message').textContent = !city.highway ? 'Clear a tile at the map edge for highway access.'
+    : arrivals.waiting ? 'Waiting for highway access. Connect the neighborhood to the junction.'
+    : arrivals.inTransit ? 'Moving van en route. Residents count when it arrives.'
+    : arrivals.ready ? 'New residents are waiting to depart from the highway.'
+    : development.blocked ||
+    (!s.roads ? 'Draw a road from the highway junction to start your city.'
       : development.zone ? `${ZONES[development.zone.type].name} development is ready.`
       : !cityStats.population ? 'Zone residential land beside a road.'
       : s.queued >= Math.max(4,s.active*.28) ? 'Traffic is backing up. Try a faster route or a new connection.'

@@ -6,10 +6,13 @@ import { Simulation } from '../src/simulation.js';
 function neighborhood() {
   const city = new City(false);
   for (let x = 4; x <= 13; x++) city.addRoad(x, 4);
+  for (let x = 5; x <= 10; x++) city.addRoad(x, 7);
+  city.addRoad(10, 5);
+  city.addRoad(10, 6);
   city.paintZone('commercial', 7, 5);
   city.paintZone('industrial', 9, 5);
   city.paintZone('residential', 4, 5);
-  city.paintZone('residential', 4, 8);
+  city.paintZone('residential', 4, 9);
   return city;
 }
 function supplyUtilities(city) {
@@ -31,13 +34,14 @@ test('zoning waits for the simulation clock, demand and an adjacent road', () =>
   advance(sim, 2);
   assert.equal(city.building(4, 5)?.type, 'house');
   assert.equal(city.buildingCount(), 3);
-  assert.equal(sim.cars.length, 0);
-  assert.deepEqual(city.cityStats().demand, { residential: 0, commercial: 1, industrial: 1 });
-  advance(sim, 6);
+  assert.equal(city.cityStats().population, 0);
+  assert.equal(city.building(4, 5).awaitingResidents, true);
+  assert.deepEqual(city.cityStats().demand, { residential: 0, commercial: 0, industrial: 0 });
+  advance(sim, 24);
   assert.equal(city.building(7, 5)?.type, 'shop');
   assert.equal(city.building(9, 5)?.type, 'factory');
-  assert.equal(city.building(4, 8), undefined);
-  assert.equal(city.zone(4, 8)?.type, 'residential');
+  assert.equal(city.building(4, 9), undefined);
+  assert.equal(city.zone(4, 9)?.type, 'residential');
   assert.equal(city.nextDevelopment(city.cityStats()).blocked, 'Needs an adjacent road');
   assert.equal(city.cityStats().population, 4);
   assert.equal(city.cityStats().jobs, 5);
@@ -61,7 +65,7 @@ test('growth needs both services at the lot and skips uncovered zones', () => {
   assert.equal(city.building(4, 5), undefined, 'a distant tower does not supply the home');
 
   city.place('water', 6, 2);
-  advance(sim, 9);
+  advance(sim, 27);
   assert.equal(city.building(4, 5)?.type, 'house');
   assert.equal(city.building(9, 5)?.type, 'factory');
   city.paintZone('residential', 13, 5);
@@ -81,14 +85,14 @@ test('growth needs both services at the lot and skips uncovered zones', () => {
 test('new saves preserve queued zones, developed lots, and service areas', () => {
   const city = neighborhood();
   supplyUtilities(city);
-  advance(new Simulation(city), 10);
+  advance(new Simulation(city), 28);
   city.setModifier(5, 4, 'signal');
   const save = JSON.parse(JSON.stringify(city.serialize()));
   const loaded = City.fromJSON(save);
   assert.deepEqual(loaded.serialize(), save);
   assert.equal(loaded.road(5, 4).modifier, 'signal');
-  assert.equal(loaded.zone(4, 8)?.type, 'residential');
-  assert.equal(loaded.building(4, 8), undefined);
+  assert.equal(loaded.zone(4, 9)?.type, 'residential');
+  assert.equal(loaded.building(4, 9), undefined);
   assert.equal(loaded.building(9, 5)?.type, 'factory');
   assert.deepEqual(loaded.utilityCoverage().served, { power: 5, water: 5 });
 
@@ -101,11 +105,11 @@ test('new saves preserve queued zones, developed lots, and service areas', () =>
 test('a vacant lot can be rezoned and roads and developed lots cannot be rezoned', () => {
   const city = neighborhood();
   supplyUtilities(city);
-  assert.ok(city.paintZone('commercial', 4, 8));
-  assert.equal(city.zone(4, 8)?.type, 'commercial');
+  assert.ok(city.paintZone('commercial', 4, 9));
+  assert.equal(city.zone(4, 9)?.type, 'commercial');
   assert.equal(city.paintZone('industrial', 4, 4), false);
   advance(new Simulation(city), 4);
   assert.equal(city.paintZone('commercial', 4, 5), false);
-  assert.ok(city.demolish(4, 8));
-  assert.equal(city.zone(4, 8), undefined);
+  assert.ok(city.demolish(4, 9));
+  assert.equal(city.zone(4, 9), undefined);
 });

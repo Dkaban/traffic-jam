@@ -97,6 +97,10 @@
   transform: rotate(45deg);
 }
 
+@media (max-width: 540px) {
+  #highway-btn .desktop-label { display: none; }
+}
+
 @media (max-width: 850px) {
   .tool-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; }
   .tool { min-width: 0; height: 46px; }
