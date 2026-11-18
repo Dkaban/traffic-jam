@@ -17,6 +17,8 @@ export class Simulation {
     this.nextGrowth = GROWTH_INTERVAL;
     this.nextDeparture = DEPARTURE_INTERVAL;
     this.homes = [];
+    this.pendingHomes = [];
+    this.arrivalTargets = new Map();
     this.destinationRoads = new Map();
     this.homeIndex = 0;
     this.lastDeparture = new Map();
@@ -27,32 +29,66 @@ export class Simulation {
       if (this.city.building(car.home.x, car.home.y) !== car.home ||
           this.city.building(car.destination.x, car.destination.y) !== car.destination) return false;
       const remaining = car.path.slice(car.node);
-      return remaining.every((road, i) => this.city.road(road.x, road.y) === road &&
-        (!i || this.city.neighbors(remaining[i - 1]).includes(road)));
+      return remaining.every((road, i) => road.offMap ||
+        (this.city.road(road.x, road.y) === road &&
+        (!i || remaining[i - 1].offMap || this.city.neighbors(remaining[i - 1]).includes(road))));
     });
     this.getOccupancy();
   }
   indexTripEndpoints() {
+    if (this.cityVersion === this.city.version) return;
     this.homes = [];
+    this.pendingHomes = [];
     this.destinationRoads.clear();
     for (const building of this.city.buildings.values()) {
       const type = BUILDINGS[building.type];
-      if (type.population && this.city.connected(building)) this.homes.push(building);
+      if (building.awaitingResidents) this.pendingHomes.push(building);
+      else if (type.population && this.city.connected(building)) this.homes.push(building);
       if (type.jobs) {
         for (const road of this.city.adjacentRoads(building.x, building.y)) {
           this.destinationRoads.set(road, building);
         }
       }
     }
+    this.indexArrivalTargets();
     for (const id of this.lastDeparture.keys()) {
       if (this.time - this.lastDeparture.get(id) >= HOME_INTERVAL) this.lastDeparture.delete(id);
     }
     this.cityVersion = this.city.version;
   }
+  indexArrivalTargets() {
+    this.arrivalTargets.clear();
+    const entry = this.city.highwayEntry();
+    if (!entry || !this.pendingHomes.length) return;
+    const queue = [entry];
+    const reachable = new Set(queue);
+    for (const road of queue) {
+      for (const next of this.city.neighbors(road)) {
+        if (reachable.has(next)) continue;
+        reachable.add(next);
+        queue.push(next);
+      }
+    }
+    for (const home of this.pendingHomes) {
+      const targets = this.city.adjacentRoads(home.x, home.y).filter(road => reachable.has(road));
+      if (targets.length) this.arrivalTargets.set(home, targets);
+    }
+  }
+  arrivalStatus() {
+    this.indexTripEndpoints();
+    const van = this.cars.find(car => car.arrival);
+    const reachableVan = van && this.arrivalTargets.has(van.home);
+    return {
+      waiting: this.pendingHomes.length - this.arrivalTargets.size - Number(Boolean(van && !reachableVan)),
+      ready: this.arrivalTargets.size - Number(Boolean(reachableVan)),
+      inTransit: van ? 1 : 0,
+    };
+  }
   getOccupancy() {
     const occupancy = new Map();
     for (const car of this.cars) {
       const p = car.path[Math.min(car.node + (car.t >= .5 ? 1 : 0), car.path.length - 1)];
+      if (p.offMap) continue;
       const k = key(p.x, p.y);
       occupancy.set(k, (occupancy.get(k) || 0) + 1);
     }
@@ -60,7 +96,7 @@ export class Simulation {
     return occupancy;
   }
   startTrip() {
-    if (this.cityVersion !== this.city.version) this.indexTripEndpoints();
+    this.indexTripEndpoints();
     if (!this.homes.length || !this.destinationRoads.size) return;
     const home = this.homes[this.homeIndex % this.homes.length];
     this.homeIndex = (this.homeIndex + 1) % this.homes.length;
@@ -93,6 +129,25 @@ export class Simulation {
       color: pick(COLORS), facing: 0, wait: false, stopKey: null, stopCountdown: 0, tripTime: 0,
     });
   }
+  startArrival() {
+    this.indexTripEndpoints();
+    if (this.cars.some(car => car.arrival) || !this.arrivalTargets.size) return;
+    const [home, targets] = this.arrivalTargets.entries().next().value;
+    const entry = this.city.highwayEntry();
+    let path = null;
+    for (const target of targets) {
+      const route = this.city.findRoute(entry, target, this.occupancy);
+      if (route && (!path || route.length < path.length)) path = route;
+    }
+    if (!path) return;
+    const { dx, dy } = this.city.highway;
+    const start = { x: entry.x - dx / 2, y: entry.y - dy / 2, offMap: true };
+    this.cars.push({
+      id: this.nextId++, home, destination: home, arrival: true,
+      path: [start, ...path], node: 0, t: 0, speed: 1.25,
+      color: '#d7eaff', facing: Math.atan2(dy, dx), wait: false, stopKey: null, stopCountdown: 0, tripTime: 0,
+    });
+  }
   canEnter(car, next, occupancy) {
     const previous = car.path[car.node];
     const dx = next.x - previous.x, dy = next.y - previous.y;
@@ -115,13 +170,14 @@ export class Simulation {
   update(dt) {
     dt = Math.min(Math.max(dt, 0), .08);
     this.time += dt;
-    let developed = false;
+    let changed = false;
     if (this.time >= this.nextGrowth) {
       this.nextGrowth += GROWTH_INTERVAL;
-      developed = this.city.develop();
+      changed = this.city.develop();
     }
     if (this.time >= this.nextDeparture) {
       this.nextDeparture += DEPARTURE_INTERVAL;
+      this.startArrival();
       this.startTrip();
     }
     const occupancy = this.getOccupancy();
@@ -130,6 +186,7 @@ export class Simulation {
       car.wait = false;
       const next = car.path[car.node + 1];
       if (!next) {
+        if (car.arrival) changed = this.city.moveIn(car.home) || changed;
         this.completed++; this.totalTripTime += car.tripTime;
         finished.add(car);
         continue;
@@ -148,7 +205,7 @@ export class Simulation {
     }
     if (finished.size) this.cars = this.cars.filter(car => !finished.has(car));
     this.getOccupancy();
-    return developed;
+    return changed;
   }
   // Round corners by blending the incoming and outgoing road directions.
   // Each segment keeps its endpoints at tile centers, but uses continuous

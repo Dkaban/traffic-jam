@@ -1,5 +1,5 @@
 # Traffic Jam
 
-Traffic Jam is a browser-based city builder. Draw streets, zone land for homes, shops, and industry, and place power plants and water towers so your neighborhoods can grow. Manage the traffic that comes with a busier city.
+Traffic Jam is a browser-based city builder. Connect your streets to the highway, zone land for homes, shops, and industry, and supply power and water. Watch moving vans bring in new residents, then manage the traffic as your city grows.
 
 [Play Traffic Jam](https://dkaban.github.io/traffic-jam/)

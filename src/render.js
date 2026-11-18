@@ -10,6 +10,7 @@ const roundRect = (ctx, x,y,w,h,r,fill,stroke) => {
   if (fill) {ctx.fillStyle=fill;ctx.fill();}
   if (stroke) {ctx.strokeStyle=stroke;ctx.stroke();}
 };
+const MIN_ZOOM = .18;
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -30,7 +31,7 @@ export class Renderer {
   }
   fit() {
     const zoom = Math.min(this.w/(COLS*TILE + 100), this.h/(ROWS*TILE + 90), 1.18);
-    this.camera.zoom = Math.max(.45, zoom);
+    this.camera.zoom = Math.max(MIN_ZOOM, zoom);
     this.camera.x = (this.w - COLS*TILE*this.camera.zoom)/2;
     this.camera.y = (this.h - ROWS*TILE*this.camera.zoom)/2;
   }
@@ -41,10 +42,16 @@ export class Renderer {
   }
   zoomAt(px,py,delta) {
     const old = this.camera.zoom;
-    const next = Math.max(.43,Math.min(2.6, old*delta));
+    const next = Math.max(MIN_ZOOM,Math.min(2.6, old*delta));
     this.camera.x = px - ((px-this.camera.x)/old)*next;
     this.camera.y = py - ((py-this.camera.y)/old)*next;
     this.camera.zoom=next;
+  }
+  focus(tile) {
+    const zoom = Math.max(.65,this.camera.zoom);
+    this.camera.x = this.w/2-(tile.x+.5)*TILE*zoom;
+    this.camera.y = this.h/2-(tile.y+.5)*TILE*zoom;
+    this.camera.zoom = zoom;
   }
   draw(city, sim, state) {
     const c=this.ctx, d=this.dpr;
@@ -68,6 +75,7 @@ export class Renderer {
     this.buildings(city,coverage.cells);
     this.cars(sim);
     this.preview(city,state);
+    this.highwaySign(city);
     c.restore();
   }
   utilityFootprints(areas,service,preview=false) {
@@ -144,10 +152,10 @@ export class Renderer {
     const c=this.ctx,S=TILE;
     for (const r of city.roads.values()) {
       const x=r.x*S,y=r.y*S;
-      c.fillStyle='#809087';c.fillRect(x,y,S,S);
-      c.fillStyle='#273139';c.fillRect(x+2,y+2,S-4,S-4);
-      for (const [dx,dy] of [[0,-1],[1,0],[0,1],[-1,0]]) if(city.road(r.x+dx,r.y+dy)){
-        c.fillStyle='#29353d';
+      c.fillStyle=r.highway?'#6d9db3':'#809087';c.fillRect(x,y,S,S);
+      c.fillStyle=r.highway?'#203a4a':'#273139';c.fillRect(x+2,y+2,S-4,S-4);
+      for (const [dx,dy] of [[0,-1],[1,0],[0,1],[-1,0]]) if(city.roadLink(r,dx,dy)){
+        c.fillStyle=r.highway?'#203a4a':'#29353d';
         if(dx===1) c.fillRect(x+S-3,y+3,4,S-6);
         if(dx===-1) c.fillRect(x-1,y+3,4,S-6);
         if(dy===1) c.fillRect(x+3,y+S-3,S-6,4);
@@ -156,11 +164,24 @@ export class Renderer {
     }
     for (const r of city.roads.values()) {
       const {x,y}=r, xx=x*S,yy=y*S;
-      const n=!!city.road(x,y-1),s=!!city.road(x,y+1),e=!!city.road(x+1,y),w=!!city.road(x-1,y);
+      if(r.highway){
+        const {dx,dy}=city.highway;
+        c.save();
+        c.translate(xx+S/2,yy+S/2);c.rotate(Math.atan2(dy,dx));
+        c.strokeStyle='#8dd7ef';c.lineWidth=1.2;
+        c.beginPath();
+        c.moveTo(-S/2,-9);c.lineTo(S/2,-9);
+        c.moveTo(-S/2,9);c.lineTo(S/2,9);
+        c.moveTo(-5,0);c.lineTo(5,0);c.lineTo(1,-3);
+        c.moveTo(5,0);c.lineTo(1,3);
+        c.stroke();
+        c.restore();
+      }
+      const n=!!city.roadLink(r,0,-1),s=!!city.roadLink(r,0,1),e=!!city.roadLink(r,1,0),w=!!city.roadLink(r,-1,0);
       const horiz=e||w,vert=n||s;
       c.strokeStyle='rgba(236,207,122,.58)'; c.lineWidth=1.2;c.setLineDash([7,5]);
-      if(horiz&&!vert){c.beginPath();c.moveTo(xx+3, yy+S/2);c.lineTo(xx+S-3,yy+S/2);c.stroke();}
-      else if(vert&&!horiz){c.beginPath();c.moveTo(xx+S/2,yy+3);c.lineTo(xx+S/2,yy+S-3);c.stroke();}
+      if(!r.highway && horiz&&!vert){c.beginPath();c.moveTo(xx+3, yy+S/2);c.lineTo(xx+S-3,yy+S/2);c.stroke();}
+      else if(!r.highway && vert&&!horiz){c.beginPath();c.moveTo(xx+S/2,yy+3);c.lineTo(xx+S/2,yy+S-3);c.stroke();}
       c.setLineDash([]);
       if(horiz&&vert){
         c.fillStyle='rgba(255,255,255,.15)';
@@ -171,6 +192,28 @@ export class Renderer {
       }
       if(r.modifier!=='none') this.roadModifier(r);
     }
+  }
+  highwaySign(city) {
+    const junction=city.highwayJunction();
+    if (!junction) return;
+    const c=this.ctx,S=TILE,zoom=this.camera.zoom;
+    const x=(junction.x+.5)*S,y=(junction.y+.5)*S;
+    const screenX=this.camera.x+x*zoom,screenY=this.camera.y+y*zoom;
+    if(screenX<0 || screenX>this.w || screenY<0 || screenY>this.h)return;
+    const joined=city.neighbors(junction).some(road=>!road.highway);
+    const accent=joined?'#9de9ca':'#a2daef';
+    const badgeWidth=116/zoom,badgeHeight=19/zoom;
+    const left=Math.max(-this.camera.x/zoom+5/zoom,Math.min(x-badgeWidth/2,(this.w-this.camera.x)/zoom-badgeWidth-5/zoom));
+    const badgeY=junction.y<3?y+11/zoom:y-30/zoom;
+    c.save();
+    c.strokeStyle=accent;c.lineWidth=1/zoom;
+    c.beginPath();c.arc(x,y,5/zoom,0,Math.PI*2);c.stroke();
+    c.beginPath();c.moveTo(x,junction.y<3?y+5/zoom:y-5/zoom);
+    c.lineTo(Math.max(left+4/zoom,Math.min(x,left+badgeWidth-4/zoom)),junction.y<3?badgeY:badgeY+badgeHeight);c.stroke();
+    roundRect(c,left,badgeY,badgeWidth,badgeHeight,4/zoom,'#102832',accent);
+    c.textAlign='center';c.textBaseline='middle';c.font=`700 ${10/zoom}px system-ui`;
+    c.fillStyle=accent;c.fillText('HIGHWAY JUNCTION',left+badgeWidth/2,badgeY+badgeHeight/2);
+    c.restore();
   }
   roadModifier(r) {
     const c=this.ctx,x=r.x*TILE+16,y=r.y*TILE+16;
@@ -260,6 +303,11 @@ export class Renderer {
       const mask=coverage[b.y*COLS+b.x];
       if (!(mask & UTILITY_BITS.power)) this.utilityAlert('power',x+7,y+25);
       if (!(mask & UTILITY_BITS.water)) this.utilityAlert('water',x+25,y+25);
+      if (b.awaitingResidents) {
+        roundRect(c,x+1,y+2,13,10,3,'#244f6c','#a2daef');
+        c.fillStyle='#ccefff';c.font='bold 9px system-ui';c.textAlign='center';c.textBaseline='middle';
+        c.fillText('…',x+7.5,y+6.5);
+      }
     }
   }
   utilityAlert(service,x,y) {
@@ -291,6 +339,14 @@ export class Renderer {
       const x=(p.x+.5)*S + -Math.sin(angle)*lane;
       const y=(p.y+.5)*S + Math.cos(angle)*lane;
       c.save();c.translate(x,y);c.rotate(angle);
+      if(car.arrival){
+        roundRect(c,-10,-5.5,21,11,2,'#122939');
+        roundRect(c,-9,-4.6,14,9.2,2,'#d7eaff','#94cae9');
+        roundRect(c,5,-4.2,5,8.4,1,'#468ab8');
+        c.fillStyle='#6daecf';c.fillRect(-7,-1,10,2);
+        c.fillStyle='#fcf4d7';c.fillRect(9,-2.8,1.5,1.6);c.fillRect(9,1.3,1.5,1.6);
+        c.restore();continue;
+      }
       c.fillStyle='rgba(8,18,25,.4)';roundRect(c,-7+1.3,-4+1.8,15,8,2,'rgba(8,18,25,.4)');
       roundRect(c,-7.5,-4.4,15,8.8,2.8,car.color);
       c.fillStyle='rgba(24,54,67,.82)';roundRect(c,-1.8,-3.1,5.5,6.2,1,'rgba(24,54,67,.82)');
@@ -311,7 +367,7 @@ export class Renderer {
       const paint=ZONES[state.tool];
       const utility=BUILDINGS[state.tool]?.service;
       const occupied=road||building||zone;
-      const valid=isRoad?!building&&!zone : paint?!road&&!building : utility?!occupied : state.tool==='bulldoze'?occupied:road;
+      const valid=isRoad?!building&&!zone : paint?!road&&!building : utility?!occupied : !road?.highway&&(state.tool==='bulldoze'?occupied:road);
       c.fillStyle=valid?(paint?`${paint.color}52`:isRoad?'rgba(104,210,197,.4)':'rgba(142,239,194,.32)'):'rgba(245,108,93,.25)';
       c.fillRect(p.x*S+1,p.y*S+1,S-2,S-2);
       c.strokeStyle=valid?(paint?.color??'#adf3d8'):'#f98f87';c.lineWidth=1.7;c.strokeRect(p.x*S+2,p.y*S+2,S-4,S-4);
