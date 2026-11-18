@@ -62,9 +62,22 @@
           <span><abbr title="Industrial" class="zone-industrial">I</abbr> <output id="demand-industrial" aria-label="Industrial demand">0</output></span>
         </div>
         <div class="capacity-stats" aria-label="Utility capacity">
-          <span id="power-status">Power <strong id="stat-power">0 / 3</strong></span>
-          <span id="water-status">Water <strong id="stat-water">0 / 3</strong></span>
+          <button type="button" class="utility-toggle" id="power-status" data-utility="power" aria-pressed="false" aria-controls="utility-legend" title="Toggle the power overlay">Power <strong id="stat-power">0 / 3</strong></button>
+          <button type="button" class="utility-toggle" id="water-status" data-utility="water" aria-pressed="false" aria-controls="utility-legend" title="Toggle the water overlay">Water <strong id="stat-water">0 / 3</strong></button>
         </div>
+      </section>
+      <section id="utility-legend" class="utility-legend" aria-label="Utility map legend" hidden>
+        <div class="utility-summary">
+          <strong id="utility-balance" aria-live="polite"></strong>
+          <span>Capacity is shared citywide. Sources need an adjacent road.</span>
+        </div>
+        <ul class="utility-key">
+          <li><span class="utility-mark" aria-hidden="true"></span>Lot using capacity</li>
+          <li><span class="utility-mark utility-mark-available" aria-hidden="true"></span>Room to grow for this service</li>
+          <li><span class="utility-mark utility-mark-waiting" aria-hidden="true"></span>Lot waiting for capacity</li>
+          <li><span class="utility-mark utility-mark-source" aria-hidden="true">✓</span>Active source</li>
+          <li><span class="utility-mark utility-mark-disconnected" aria-hidden="true">!</span>Source needs road</li>
+        </ul>
       </section>
       <div class="canvas-shell" id="canvas-shell">
         <canvas id="game-canvas" aria-label="Interactive city map"></canvas>
@@ -83,7 +96,7 @@
     <div class="help-grid">
       <div><b>01</b><strong>Draw roads</strong><span>Choose Road and drag across the map. Intersections connect automatically.</span></div>
       <div><b>02</b><strong>Paint zones</strong><span>Choose residential, commercial or industrial and drag over vacant land beside a road. Buildings appear as demand grows.</span></div>
-      <div><b>03</b><strong>Supply utilities</strong><span>Starter power and water serve three new lots. Place a power plant and water tower beside roads to expand capacity.</span></div>
+      <div><b>03</b><strong>Supply utilities</strong><span>Starter power and water serve three new lots. Place sources beside roads to expand citywide capacity. Select Power or Water above the map to see which lots use it.</span></div>
       <div><b>04</b><strong>Keep trips moving</strong><span>Residents drive to shops and jobs they can reach. Try different routes or traffic controls to ease queues.</span></div>
     </div>
     <p class="help-keyboard">SHORTCUTS &nbsp; 1–5 build &nbsp;·&nbsp; W water &nbsp;·&nbsp; 6–0 modifiers &nbsp;·&nbsp; X bulldoze &nbsp;·&nbsp; R rotate &nbsp;·&nbsp; Space + drag pan &nbsp;·&nbsp; Ctrl/⌘ + Z undo</p>

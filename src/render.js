@@ -59,8 +59,47 @@ export class Renderer {
     this.roads(city);
     if (state.heatmap) this.heatmap(sim);
     this.buildings(city,sim);
+    if (state.utilityView) this.utilities(state.utilityView);
     this.cars(sim);
     this.preview(city,state);
+    c.restore();
+  }
+  utilities(view) {
+    const c=this.ctx,S=TILE;
+    const color=BUILDINGS[view.service].color;
+    const warning='#f5a861';
+    c.save();
+    for (const lot of view.lots) {
+      const x=lot.x*S,y=lot.y*S;
+      const waiting=lot.status==='waiting';
+      c.setLineDash(lot.status==='available' ? [2,2] : []);
+      c.strokeStyle=waiting ? warning : color;
+      c.lineWidth=waiting ? 2 : 1.5;
+      c.strokeRect(x+2,y+2,S-4,S-4);
+      if (waiting) {
+        c.beginPath();
+        for (let dx=4;dx<=14;dx+=5) {
+          c.moveTo(x+dx,y+S-4);
+          c.lineTo(x+dx+4,y+S-8);
+        }
+        c.stroke();
+      }
+    }
+    c.textAlign='center';
+    c.textBaseline='middle';
+    c.font='bold 10px system-ui';
+    for (const source of view.sources) {
+      const x=source.x*S,y=source.y*S;
+      const marker=source.active ? color : warning;
+      c.setLineDash(source.active ? [] : [4,2]);
+      c.strokeStyle=marker;
+      c.lineWidth=2.5;
+      c.strokeRect(x+2,y+2,S-4,S-4);
+      c.fillStyle=marker;
+      c.beginPath();c.arc(x+27,y+5,6,0,Math.PI*2);c.fill();
+      c.fillStyle='#1b2829';
+      c.fillText(source.active ? '✓' : '!',x+27,y+5);
+    }
     c.restore();
   }
   zones(city) {

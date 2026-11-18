@@ -103,12 +103,36 @@ export class City {
       },
     };
   }
+  developmentBlock(zone, demand) {
+    if (!this.connected(zone)) return 'Needs an adjacent road';
+    if (!demand[zone.type]) return `Waiting for ${zone.type} demand`;
+    return null;
+  }
+  utilityView(service) {
+    const { used, demand, [service]: capacity } = this.cityStats();
+    const spare = capacity - used;
+    const lots = [];
+    const sources = [];
+    for (const zone of this.zones.values()) {
+      if (this.building(zone.x, zone.y)) {
+        lots.push({ ...zone, status: 'used' });
+      } else if (!this.developmentBlock(zone, demand)) {
+        lots.push({ ...zone, status: spare > 0 ? 'available' : 'waiting' });
+      }
+    }
+    for (const building of this.buildings.values()) {
+      if (building.type === service) {
+        sources.push({ ...building, active: this.connected(building) });
+      }
+    }
+    return { service, used, capacity, spare, lots, sources };
+  }
   nextDevelopment(stats) {
     let blocked = null;
     for (const zone of this.zones.values()) {
       if (this.building(zone.x, zone.y)) continue;
-      if (!this.connected(zone)) { blocked ??= 'Needs an adjacent road'; continue; }
-      if (!stats.demand[zone.type]) { blocked ??= `Waiting for ${zone.type} demand`; continue; }
+      const reason = this.developmentBlock(zone, stats.demand);
+      if (reason) { blocked ??= reason; continue; }
       const shortages = ['power', 'water'].filter(service => stats.used >= stats[service]);
       if (shortages.length) {
         return { blocked: `Needs more ${shortages.join(' and ')} capacity` };

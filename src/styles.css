@@ -34,6 +34,58 @@
 .city-stats .at-capacity strong { color: #ffd284; }
 .footer-message span:last-child { overflow: visible; white-space: normal; }
 
+.utility-toggle[data-utility="power"], .utility-legend[data-service="power"] { --utility-color: #f4bb6d; }
+.utility-toggle[data-utility="water"], .utility-legend[data-service="water"] { --utility-color: #7ec9ed; }
+.utility-toggle {
+  min-height: 30px;
+  padding: 4px 9px;
+  border: 1px solid #405251;
+  border-radius: 7px;
+  background: #243438;
+  color: #dbe9e3;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.utility-toggle:hover, .utility-toggle[aria-pressed="true"] {
+  border-color: var(--utility-color);
+  color: var(--utility-color);
+}
+.utility-toggle[aria-pressed="true"] { background: #304043; box-shadow: inset 0 -2px var(--utility-color); }
+.utility-toggle strong { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.utility-legend {
+  --utility-warning: #f5a861;
+  flex: none;
+  padding: 9px 14px;
+  margin: -4px 0 10px;
+  background: #18282b;
+  border: 1px solid #354d4c;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #ccddd5;
+}
+.utility-summary, .utility-key { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.utility-summary strong { color: var(--utility-color); }
+.utility-key { padding: 0; margin: 6px 0 0; list-style: none; }
+.utility-key li { display: inline-flex; align-items: center; gap: 5px; }
+.utility-mark {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--utility-color);
+  border-radius: 2px;
+  color: var(--utility-color);
+  font-weight: 800;
+  line-height: 1;
+}
+.utility-mark-available { border-style: dashed; }
+.utility-mark-waiting {
+  border-color: var(--utility-warning);
+  background: repeating-linear-gradient(135deg, transparent 0 3px, var(--utility-warning) 3px 4px);
+}
+.utility-mark-source { border-width: 2px; }
+.utility-mark-disconnected { border-color: var(--utility-warning); border-style: dashed; color: var(--utility-warning); }
+
 @media (max-width: 850px) {
   .tool-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; }
   .tool { min-width: 0; height: 46px; }
@@ -50,4 +102,6 @@
   .canvas-shell { min-height: 255px; }
   .city-stats { margin: 0 0 8px; padding: 7px 8px; font-size: 11px; }
   .demand-stats, .capacity-stats { gap: 4px 7px; }
+  .utility-toggle { min-height: 36px; }
+  .utility-legend { margin-top: 0; padding: 7px 8px; }
 }
