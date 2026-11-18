@@ -1,4 +1,4 @@
-import { City, BUILDINGS, DIRECTIONS, ZONES } from './world.js';
+import { City, BUILDINGS, DIRECTIONS, UTILITY_BITS, ZONES } from './world.js';
 import { Simulation } from './simulation.js';
 import { Renderer } from './render.js';
 
@@ -12,14 +12,12 @@ try {
   city = data ? City.fromJSON(JSON.parse(data)) : new City();
 } catch { city = new City(); }
 const sim = new Simulation(city);
-const state = { tool:'road', direction:'e', heatmap:false, utilityView:null, hover:null, dragCells:[] };
+const state = { tool:'road', direction:'e', heatmap:false, utility:null, hover:null, dragCells:[] };
 const undoStack = [];
 let painting = null, panning = false, spaceHeld = false, dragBefore = null, lastCell = null;
 let lastPoint = null, speed = 1, paused = false, lastFrame = performance.now(), lastStats = 0;
 let toastTimer;
-let visibleUtility = null;
-let utilityViewCity;
-let utilityViewVersion;
+let utilityPlacement = null;
 const utilityLegend = $('#utility-legend');
 const utilityBalance = $('#utility-balance');
 const utilityToggles = document.querySelectorAll('[data-utility]');
@@ -34,35 +32,38 @@ function toast(message) {
 function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(city.serialize())); } catch { /* Storage may be disabled */ } }
 function remember(before) { undoStack.push(before); if(undoStack.length>40) undoStack.shift(); save(); }
 function undo() {
+  cancelUtilityPlacement();
   const previous = undoStack.pop();
   if(!previous) {toast('Nothing to undo yet');return;}
   city=City.fromJSON(previous);
   sim.reset(city); save(); toast('Last edit undone');
 }
-function refreshUtilityView() {
-  if (!visibleUtility || utilityViewCity === city && utilityViewVersion === city.version &&
-      state.utilityView?.service === visibleUtility) return;
-  state.utilityView = city.utilityView(visibleUtility);
-  utilityViewCity = city;
-  utilityViewVersion = city.version;
-  const { used, capacity, spare } = state.utilityView;
-  const balance = spare > 0 ? `${spare} spare` : spare === 0 ? 'At capacity' : `Over capacity by ${-spare}`;
-  const label = `${BUILDINGS[visibleUtility].service} · ${used} / ${capacity} used · ${balance}`;
+function updateUtilityStats() {
+  const { served } = city.utilityCoverage();
+  const total = city.buildingCount();
+  for (const service of Object.keys(UTILITY_BITS)) {
+    const output = $(`#stat-${service}`);
+    const count = `${served[service]} / ${total}`;
+    if (output.textContent !== count) output.textContent = count;
+  }
+  if (!state.utility) return;
+  const service = state.utility;
+  const label = `${BUILDINGS[service].service} · ${served[service]} of ${total} buildings served`;
   if (utilityBalance.textContent !== label) utilityBalance.textContent = label;
 }
 function showUtility(service) {
-  visibleUtility = service;
+  state.utility = service;
   utilityLegend.hidden = !service;
   utilityLegend.dataset.service = service ?? '';
   utilityToggles.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.utility === service)));
-  if (service) refreshUtilityView();
-  else state.utilityView = null;
+  if (service) updateUtilityStats();
 }
 utilityToggles.forEach(button => button.addEventListener('click', () => {
   const service = button.dataset.utility;
-  showUtility(visibleUtility === service ? null : service);
+  showUtility(state.utility === service ? null : service);
 }));
 function setTool(tool) {
+  if (tool !== state.tool) cancelUtilityPlacement();
   state.tool = tool;
   if (BUILDINGS[tool]?.service) showUtility(tool);
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('selected',b.dataset.tool===tool));
@@ -70,7 +71,7 @@ function setTool(tool) {
   $('#road-hint').textContent = tool==='road' ? '✎  Click & drag to draw roads'
     : tool==='bulldoze' ? '⌫  Select a tile to remove it'
     : ZONES[tool] ? `Paint ${ZONES[tool].name.toLowerCase()} zones beside roads`
-    : BUILDINGS[tool]?.service ? `Place a ${BUILDINGS[tool].name.toLowerCase()} beside a road`
+    : BUILDINGS[tool]?.service ? 'Drag to preview coverage · Release to place'
     : tool==='oneway' ? `➜  Select a road · Direction: ${state.direction.toUpperCase()}`
     : 'Select a road to apply the tool';
 }
@@ -115,10 +116,7 @@ function commit(action) {
   else if(BUILDINGS[action]?.service) {
     if (city.zone(x,y) || city.road(x,y) || city.building(x,y)) { toast('That tile is occupied'); return; }
     changed=city.place(action,x,y);
-    if (changed) {
-      showUtility(action);
-      if (!city.connected({x,y})) toast('Connect this utility to an adjacent road');
-    }
+    if (changed) showUtility(action);
   } else {
     if (!city.road(x,y)) { toast('Place modifiers on a road'); return; }
     changed=city.setModifier(x,y,action==='normal'?'none':action,state.direction);
@@ -129,14 +127,37 @@ function commit(action) {
     updateStats();
   }
 }
+function utilityTile({ x, y }) {
+  return x >= 0 && x < renderer.w && y >= 0 && y < renderer.h
+    ? renderer.screenToGrid(x,y) : null;
+}
+function cancelUtilityPlacement() {
+  if (!utilityPlacement) return;
+  const { pointerId } = utilityPlacement;
+  utilityPlacement = null;
+  state.hover = null;
+  if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+}
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('pointerdown',e=>{
+  if (utilityPlacement || e.isPrimary === false) return;
   const p=pos(e);
   lastPoint=p;
-  if(e.button===2 || spaceHeld || e.button===1){panning=true;$('#canvas-shell').classList.add('panning');canvas.setPointerCapture(e.pointerId);return;}
+  if(e.button===2 || spaceHeld || e.button===1){
+    panning=true;
+    state.hover=null;
+    $('#canvas-shell').classList.add('panning');
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
   if(e.button!==0) return;
   const tile=renderer.screenToGrid(p.x,p.y);
   state.hover=tile;
+  if (BUILDINGS[state.tool]?.service) {
+    utilityPlacement = { pointerId:e.pointerId, tool:state.tool };
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
   if(!tile) return;
   canvas.setPointerCapture(e.pointerId);
   if(state.tool==='road' || ZONES[state.tool]) {
@@ -147,6 +168,11 @@ canvas.addEventListener('pointerdown',e=>{
 });
 canvas.addEventListener('pointermove',e=>{
   const p=pos(e);
+  if (utilityPlacement) {
+    if (utilityPlacement.pointerId === e.pointerId) state.hover = utilityTile(p);
+    return;
+  }
+  if (e.isPrimary === false) return;
   if(panning && lastPoint){
     renderer.camera.x+=p.x-lastPoint.x;
     renderer.camera.y+=p.y-lastPoint.y;
@@ -159,6 +185,19 @@ canvas.addEventListener('pointermove',e=>{
   lastPoint=p;
 });
 function pointerEnd(event){
+  if (utilityPlacement) {
+    if (event && utilityPlacement.pointerId !== event.pointerId) return;
+    const { tool } = utilityPlacement;
+    const tile = event?.type === 'pointerup' ? utilityTile(pos(event)) : null;
+    cancelUtilityPlacement();
+    if (tile) {
+      state.hover = tile;
+      commit(tool);
+      if (event.pointerType !== 'mouse') state.hover = null;
+    }
+    return;
+  }
+  if (event?.isPrimary === false) return;
   if(painting){
     if (event?.type === 'pointerup') {
       const p = pos(event);
@@ -177,7 +216,10 @@ function pointerEnd(event){
 }
 canvas.addEventListener('pointerup',pointerEnd);
 canvas.addEventListener('pointercancel',pointerEnd);
-canvas.addEventListener('pointerleave',()=>{if(!painting&&!panning)state.hover=null;});
+canvas.addEventListener('lostpointercapture',e=>{
+  if (utilityPlacement?.pointerId === e.pointerId) cancelUtilityPlacement();
+});
+canvas.addEventListener('pointerleave',()=>{if(!painting&&!panning&&!utilityPlacement)state.hover=null;});
 canvas.addEventListener('wheel',e=>{
   e.preventDefault();
   const p=pos(e);renderer.zoomAt(p.x,p.y,e.deltaY<0?1.12:1/1.12);
@@ -204,6 +246,7 @@ $('#close-help').addEventListener('click',()=>help.close());
 $('#play-btn').addEventListener('click',()=>help.close());
 $('#restart-btn').addEventListener('click',()=>{
   if(!window.confirm('Reset to the original starter city? Your current layout will be replaced.')) return;
+  cancelUtilityPlacement();
   remember(city.serialize());
   city=new City();
   sim.reset(city);
@@ -214,6 +257,7 @@ $('#restart-btn').addEventListener('click',()=>{
 });
 $('#reset-btn').addEventListener('click',()=>{
   if(!window.confirm('Start a new empty city? This replaces your saved map.')) return;
+  cancelUtilityPlacement();
   remember(city.serialize());city=new City(false);sim.reset(city);save();renderer.fit();updateZoom();toast('New city! Draw your first road.');
 });
 function rotateOneWay() {
@@ -253,10 +297,7 @@ function updateStats(){
     output.textContent=cityStats.demand[type];
     output.parentElement.classList.toggle('no-demand', !cityStats.demand[type]);
   }
-  for (const service of ['power', 'water']) {
-    $(`#stat-${service}`).textContent=`${cityStats.used} / ${cityStats[service]}`;
-    $(`#${service}-status`).classList.toggle('at-capacity', cityStats.used >= cityStats[service]);
-  }
+  updateUtilityStats();
   $('#city-message').textContent = development.blocked ||
     (!s.roads ? 'Draw a road to start your city.'
       : development.zone ? `${ZONES[development.zone.type].name} development is ready.`
@@ -267,7 +308,6 @@ function updateStats(){
 function frame(now){
   const dt=Math.min((now-lastFrame)/1000,.05);lastFrame=now;
   if(!paused && !painting){for(let i=0;i<speed;i++)if(sim.update(dt))save();}
-  refreshUtilityView();
   renderer.draw(city,sim,state);
   if(now-lastStats>250){updateStats();lastStats=now;}
   requestAnimationFrame(frame);

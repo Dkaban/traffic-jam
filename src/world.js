@@ -7,15 +7,25 @@ export const BUILDINGS = {
   office: { jobs: 3, zone: 'industrial' },
   shop: { jobs: 2, zone: 'commercial' },
   factory: { jobs: 3, zone: 'industrial' },
-  power: { service: 'Power', name: 'Power plant', capacity: 8, color: '#f4bb6d' },
-  water: { service: 'Water', name: 'Water tower', capacity: 8, color: '#7ec9ed' },
+  power: { service: 'Power', name: 'Power plant', color: '#f4bb6d' },
+  water: { service: 'Water', name: 'Water tower', color: '#7ec9ed' },
 };
 export const ZONES = {
   residential: { label: 'R', name: 'Residential', type: 'house', color: '#9aeca4' },
   commercial: { label: 'C', name: 'Commercial', type: 'shop', color: '#8acaff' },
   industrial: { label: 'I', name: 'Industrial', type: 'factory', color: '#ffd284' },
 };
-const STARTER_CAPACITY = 3;
+export const UTILITY_BITS = { power: 1, water: 2 };
+const UTILITY_RADIUS = 4;
+export function utilityArea(x, y) {
+  const left = Math.max(0, x - UTILITY_RADIUS);
+  const top = Math.max(0, y - UTILITY_RADIUS);
+  return {
+    left, top,
+    right: Math.min(COLS - 1, x + UTILITY_RADIUS),
+    bottom: Math.min(ROWS - 1, y + UTILITY_RADIUS),
+  };
+}
 export const DIRECTIONS = [
   { dx: 0, dy: -1, id: 'n' }, { dx: 1, dy: 0, id: 'e' },
   { dx: 0, dy: 1, id: 's' }, { dx: -1, dy: 0, id: 'w' },
@@ -81,21 +91,15 @@ export class City {
   buildingCount() { return this.buildings.size; }
   cityStats() {
     let population = 0, jobs = 0, homes = 0, commercial = 0, industrial = 0;
-    let used = 0, power = STARTER_CAPACITY, water = STARTER_CAPACITY;
     for (const b of this.buildings.values()) {
       const type = BUILDINGS[b.type];
       if (type.population) { population += type.population; homes++; }
       if (type.jobs) jobs += type.jobs;
       if (type.zone === 'commercial') commercial++;
       if (type.zone === 'industrial') industrial++;
-      if (this.zone(b.x, b.y)) used++;
-      if (type.service && this.connected(b)) {
-        if (b.type === 'power') power += type.capacity;
-        else water += type.capacity;
-      }
     }
     return {
-      population, jobs, used, power, water,
+      population, jobs,
       demand: {
         residential: Math.max(0, 1 + Math.floor(jobs / 2) - homes),
         commercial: Math.max(0, Math.ceil(population / 6) - commercial),
@@ -108,38 +112,43 @@ export class City {
     if (!demand[zone.type]) return `Waiting for ${zone.type} demand`;
     return null;
   }
-  utilityView(service) {
-    const { used, demand, [service]: capacity } = this.cityStats();
-    const spare = capacity - used;
-    const lots = [];
-    const sources = [];
-    for (const zone of this.zones.values()) {
-      if (this.building(zone.x, zone.y)) {
-        lots.push({ ...zone, status: 'used' });
-      } else if (!this.developmentBlock(zone, demand)) {
-        lots.push({ ...zone, status: spare > 0 ? 'available' : 'waiting' });
+  utilityCoverage() {
+    if (this.coverage?.version === this.version) return this.coverage;
+    const cells = new Uint8Array(COLS * ROWS);
+    const sources = { power: [], water: [] };
+    const served = { power: 0, water: 0 };
+    for (const building of this.buildings.values()) {
+      const mask = UTILITY_BITS[building.type];
+      if (!mask) continue;
+      const area = utilityArea(building.x, building.y);
+      sources[building.type].push(area);
+      for (let y = area.top; y <= area.bottom; y++) {
+        for (let x = area.left; x <= area.right; x++) cells[y * COLS + x] |= mask;
       }
     }
     for (const building of this.buildings.values()) {
-      if (building.type === service) {
-        sources.push({ ...building, active: this.connected(building) });
-      }
+      const mask = cells[building.y * COLS + building.x];
+      if (mask & UTILITY_BITS.power) served.power++;
+      if (mask & UTILITY_BITS.water) served.water++;
     }
-    return { service, used, capacity, spare, lots, sources };
+    this.coverage = { version: this.version, cells, sources, served };
+    return this.coverage;
   }
   nextDevelopment(stats) {
-    let blocked = null;
+    let blocked = null, utilityBlocked = null;
     for (const zone of this.zones.values()) {
       if (this.building(zone.x, zone.y)) continue;
       const reason = this.developmentBlock(zone, stats.demand);
       if (reason) { blocked ??= reason; continue; }
-      const shortages = ['power', 'water'].filter(service => stats.used >= stats[service]);
-      if (shortages.length) {
-        return { blocked: `Needs more ${shortages.join(' and ')} capacity` };
+      const mask = this.utilityCoverage().cells[zone.y * COLS + zone.x];
+      const missing = Object.keys(UTILITY_BITS).filter(service => !(mask & UTILITY_BITS[service]));
+      if (missing.length) {
+        utilityBlocked ??= `Needs ${missing.join(' and ')} coverage`;
+        continue;
       }
       return { zone };
     }
-    return { blocked };
+    return { blocked: utilityBlocked ?? blocked };
   }
   develop() {
     const { zone } = this.nextDevelopment(this.cityStats());
@@ -232,5 +241,9 @@ export class City {
     [[22,13],[26,13],[21,20]].forEach(p => this.place('apartment', ...p));
     [[20,6],[27,6]].forEach(p => this.place('office', ...p));
     [[12,15],[30,13]].forEach(p => this.place('shop', ...p));
+    this.place('power', 10, 9);
+    this.place('water', 12, 9);
+    this.place('power', 22, 17);
+    this.place('water', 24, 17);
   }
 }

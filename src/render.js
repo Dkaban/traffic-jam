@@ -1,4 +1,4 @@
-import { BUILDINGS, COLS, ROWS, TILE, ZONES, inside } from './world.js';
+import { BUILDINGS, COLS, ROWS, TILE, UTILITY_BITS, ZONES, inside, utilityArea } from './world.js';
 
 const hash = (x,y) => {
   let a = (x * 374761393 + y * 668265263) | 0;
@@ -58,47 +58,43 @@ export class Renderer {
     this.zones(city);
     this.roads(city);
     if (state.heatmap) this.heatmap(sim);
-    this.buildings(city,sim);
-    if (state.utilityView) this.utilities(state.utilityView);
+    const coverage=city.utilityCoverage();
+    if (state.utility) this.utilityFootprints(coverage.sources[state.utility],state.utility);
+    const point=state.hover;
+    if (point && BUILDINGS[state.tool]?.service &&
+        !city.road(point.x,point.y) && !city.building(point.x,point.y) && !city.zone(point.x,point.y)) {
+      this.utilityFootprints([utilityArea(point.x,point.y)],state.tool,true);
+    }
+    this.buildings(city,coverage.cells);
     this.cars(sim);
     this.preview(city,state);
     c.restore();
   }
-  utilities(view) {
+  utilityFootprints(areas,service,preview=false) {
+    if (!areas.length) return;
     const c=this.ctx,S=TILE;
-    const color=BUILDINGS[view.service].color;
-    const warning='#f5a861';
+    const color=BUILDINGS[service].color;
     c.save();
-    for (const lot of view.lots) {
-      const x=lot.x*S,y=lot.y*S;
-      const waiting=lot.status==='waiting';
-      c.setLineDash(lot.status==='available' ? [2,2] : []);
-      c.strokeStyle=waiting ? warning : color;
-      c.lineWidth=waiting ? 2 : 1.5;
-      c.strokeRect(x+2,y+2,S-4,S-4);
-      if (waiting) {
-        c.beginPath();
-        for (let dx=4;dx<=14;dx+=5) {
-          c.moveTo(x+dx,y+S-4);
-          c.lineTo(x+dx+4,y+S-8);
-        }
-        c.stroke();
-      }
+    c.beginPath();
+    for (const {left,top,right,bottom} of areas) {
+      c.rect(left*S,top*S,(right-left+1)*S,(bottom-top+1)*S);
     }
-    c.textAlign='center';
-    c.textBaseline='middle';
-    c.font='bold 10px system-ui';
-    for (const source of view.sources) {
-      const x=source.x*S,y=source.y*S;
-      const marker=source.active ? color : warning;
-      c.setLineDash(source.active ? [] : [4,2]);
-      c.strokeStyle=marker;
-      c.lineWidth=2.5;
-      c.strokeRect(x+2,y+2,S-4,S-4);
-      c.fillStyle=marker;
-      c.beginPath();c.arc(x+27,y+5,6,0,Math.PI*2);c.fill();
-      c.fillStyle='#1b2829';
-      c.fillText(source.active ? '✓' : '!',x+27,y+5);
+    c.fillStyle=color+(preview?'66':'42');
+    c.fill();
+    c.save();
+    c.clip();
+    c.beginPath();
+    for(let x=1;x<COLS;x++){c.moveTo(x*S,0);c.lineTo(x*S,ROWS*S);}
+    for(let y=1;y<ROWS;y++){c.moveTo(0,y*S);c.lineTo(COLS*S,y*S);}
+    c.strokeStyle=color+(preview?'b8':'60');
+    c.lineWidth=1;
+    c.stroke();
+    c.restore();
+    c.strokeStyle=color;
+    c.lineWidth=preview?2.4:1.7;
+    c.setLineDash(preview?[5,3]:[]);
+    for (const {left,top,right,bottom} of areas) {
+      c.strokeRect(left*S+1,top*S+1,(right-left+1)*S-2,(bottom-top+1)*S-2);
     }
     c.restore();
   }
@@ -209,7 +205,7 @@ export class Renderer {
       c.fillRect(x*S+2,y*S+2,S-4,S-4);
     }
   }
-  buildings(city) {
+  buildings(city,coverage) {
     const c=this.ctx,S=TILE;
     for(const b of city.buildings.values()) {
       const x=b.x*S,y=b.y*S, connected=city.connected(b);
@@ -257,11 +253,34 @@ export class Renderer {
         c.fillStyle='#d0edf3';
         c.fillRect(x+8,y+12,16,2);
       }
-      if(!connected){
+      if(!connected && !BUILDINGS[b.type].service){
         c.fillStyle='#f2bc6c';c.beginPath();c.arc(x+27,y+5,6,0,Math.PI*2);c.fill();
         c.font='bold 10px system-ui';c.textAlign='center';c.textBaseline='middle';c.fillStyle='#3d2924';c.fillText('!',x+27,y+5);
       }
+      const mask=coverage[b.y*COLS+b.x];
+      if (!(mask & UTILITY_BITS.power)) this.utilityAlert('power',x+7,y+25);
+      if (!(mask & UTILITY_BITS.water)) this.utilityAlert('water',x+25,y+25);
     }
+  }
+  utilityAlert(service,x,y) {
+    const c=this.ctx,color=BUILDINGS[service].color;
+    c.save();
+    c.translate(x,y);
+    c.fillStyle='#182428';c.strokeStyle=color;c.lineWidth=1.2;
+    c.beginPath();c.arc(0,0,6,0,Math.PI*2);c.fill();c.stroke();
+    c.fillStyle=color;
+    c.beginPath();
+    if(service==='power'){
+      c.moveTo(1,-4);c.lineTo(-3,1);c.lineTo(-.3,1);
+      c.lineTo(-1,4.5);c.lineTo(3,-1);c.lineTo(.5,-1);
+    }else{
+      c.moveTo(0,-4);
+      c.bezierCurveTo(2,-1.5,3.3,0,3.3,1.2);
+      c.bezierCurveTo(3.3,5,-3.3,5,-3.3,1.2);
+      c.bezierCurveTo(-3.3,0,-2,-1.5,0,-4);
+    }
+    c.closePath();c.fill();
+    c.restore();
   }
   cars(sim) {
     const c=this.ctx,S=TILE;
