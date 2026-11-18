@@ -12,11 +12,17 @@ try {
   city = data ? City.fromJSON(JSON.parse(data)) : new City();
 } catch { city = new City(); }
 const sim = new Simulation(city);
-const state = { tool:'road', direction:'e', heatmap:false, hover:null, dragCells:[] };
+const state = { tool:'road', direction:'e', heatmap:false, utilityView:null, hover:null, dragCells:[] };
 const undoStack = [];
 let painting = null, panning = false, spaceHeld = false, dragBefore = null, lastCell = null;
 let lastPoint = null, speed = 1, paused = false, lastFrame = performance.now(), lastStats = 0;
 let toastTimer;
+let visibleUtility = null;
+let utilityViewCity;
+let utilityViewVersion;
+const utilityLegend = $('#utility-legend');
+const utilityBalance = $('#utility-balance');
+const utilityToggles = document.querySelectorAll('[data-utility]');
 
 function toast(message) {
   const el = $('#toast');
@@ -33,8 +39,32 @@ function undo() {
   city=City.fromJSON(previous);
   sim.reset(city); save(); toast('Last edit undone');
 }
+function refreshUtilityView() {
+  if (!visibleUtility || utilityViewCity === city && utilityViewVersion === city.version &&
+      state.utilityView?.service === visibleUtility) return;
+  state.utilityView = city.utilityView(visibleUtility);
+  utilityViewCity = city;
+  utilityViewVersion = city.version;
+  const { used, capacity, spare } = state.utilityView;
+  const balance = spare > 0 ? `${spare} spare` : spare === 0 ? 'At capacity' : `Over capacity by ${-spare}`;
+  const label = `${BUILDINGS[visibleUtility].service} · ${used} / ${capacity} used · ${balance}`;
+  if (utilityBalance.textContent !== label) utilityBalance.textContent = label;
+}
+function showUtility(service) {
+  visibleUtility = service;
+  utilityLegend.hidden = !service;
+  utilityLegend.dataset.service = service ?? '';
+  utilityToggles.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.utility === service)));
+  if (service) refreshUtilityView();
+  else state.utilityView = null;
+}
+utilityToggles.forEach(button => button.addEventListener('click', () => {
+  const service = button.dataset.utility;
+  showUtility(visibleUtility === service ? null : service);
+}));
 function setTool(tool) {
   state.tool = tool;
+  if (BUILDINGS[tool]?.service) showUtility(tool);
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('selected',b.dataset.tool===tool));
   $('#rotate-btn').hidden = tool !== 'oneway';
   $('#road-hint').textContent = tool==='road' ? '✎  Click & drag to draw roads'
@@ -85,7 +115,10 @@ function commit(action) {
   else if(BUILDINGS[action]?.service) {
     if (city.zone(x,y) || city.road(x,y) || city.building(x,y)) { toast('That tile is occupied'); return; }
     changed=city.place(action,x,y);
-    if (changed && !city.connected({x,y})) toast('Connect this utility to an adjacent road');
+    if (changed) {
+      showUtility(action);
+      if (!city.connected({x,y})) toast('Connect this utility to an adjacent road');
+    }
   } else {
     if (!city.road(x,y)) { toast('Place modifiers on a road'); return; }
     changed=city.setModifier(x,y,action==='normal'?'none':action,state.direction);
@@ -234,6 +267,7 @@ function updateStats(){
 function frame(now){
   const dt=Math.min((now-lastFrame)/1000,.05);lastFrame=now;
   if(!paused && !painting){for(let i=0;i<speed;i++)if(sim.update(dt))save();}
+  refreshUtilityView();
   renderer.draw(city,sim,state);
   if(now-lastStats>250){updateStats();lastStats=now;}
   requestAnimationFrame(frame);
