@@ -1,4 +1,4 @@
-import { BUILDINGS, COLS, ROWS, TILE, key, inside } from './world.js';
+import { BUILDINGS, COLS, ROWS, TILE, ZONES, inside } from './world.js';
 
 const hash = (x,y) => {
   let a = (x * 374761393 + y * 668265263) | 0;
@@ -55,11 +55,34 @@ export class Renderer {
     c.translate(this.camera.x,this.camera.y);
     c.scale(this.camera.zoom,this.camera.zoom);
     this.ground();
+    this.zones(city);
     this.roads(city);
     if (state.heatmap) this.heatmap(sim);
     this.buildings(city,sim);
     this.cars(sim);
     this.preview(city,state);
+    c.restore();
+  }
+  zones(city) {
+    const c=this.ctx,S=TILE;
+    c.save();
+    c.textAlign='center';
+    c.textBaseline='middle';
+    c.font='bold 16px system-ui';
+    for (const zone of city.zones.values()) {
+      if (city.building(zone.x,zone.y)) continue;
+      const x=zone.x*S,y=zone.y*S;
+      const style=ZONES[zone.type];
+      c.globalAlpha=.25;
+      c.fillStyle=style.color;
+      c.fillRect(x+2,y+2,S-4,S-4);
+      c.globalAlpha=1;
+      c.strokeStyle=style.color;
+      c.lineWidth=1.1;
+      c.strokeRect(x+2,y+2,S-4,S-4);
+      c.fillStyle=style.color;
+      c.fillText(style.label,x+S/2,y+S/2);
+    }
     c.restore();
   }
   ground() {
@@ -173,6 +196,27 @@ export class Renderer {
         c.fillStyle='#6e9b98';c.fillRect(x+7,y+17,18,9);
         for(let i=0;i<5;i++) {c.fillStyle=i%2?'#e8f1e7':'#c46f5d';c.fillRect(x+5+i*4.5,y+10,4.5,7);}
         c.fillStyle='#ffedb0';c.fillRect(x+10,y+20,8,6);
+      }else if(b.type==='factory'){
+        roundRect(c,x+3,y+12,25,16,2,'#b9956e','#e5c695');
+        c.fillStyle='#855e4c';
+        c.fillRect(x+6,y+5,5,16);
+        c.fillRect(x+14,y+8,5,13);
+        c.fillStyle='#f8dfb8';
+        c.fillRect(x+8,y+23,16,3);
+      }else if(b.type==='power'){
+        roundRect(c,x+4,y+5,24,23,3,'#755b43','#f4bb6d');
+        c.fillStyle='#ffe1a5';
+        c.beginPath();
+        c.moveTo(x+18,y+8);c.lineTo(x+10,y+18);c.lineTo(x+16,y+18);
+        c.lineTo(x+14,y+25);c.lineTo(x+23,y+14);c.lineTo(x+17,y+14);
+        c.closePath();c.fill();
+      }else if(b.type==='water'){
+        c.fillStyle='#b3cbd1';
+        c.fillRect(x+9,y+17,3,11);
+        c.fillRect(x+20,y+17,3,11);
+        roundRect(c,x+5,y+5,22,15,5,'#4a8fb2','#9fd7eb');
+        c.fillStyle='#d0edf3';
+        c.fillRect(x+8,y+12,16,2);
       }
       if(!connected){
         c.fillStyle='#f2bc6c';c.beginPath();c.arc(x+27,y+5,6,0,Math.PI*2);c.fill();
@@ -202,15 +246,18 @@ export class Renderer {
     const c=this.ctx,S=TILE;
     const point=state.hover;
     if (!point) return;
-    const cells=state.tool==='road' && state.dragCells.length ? state.dragCells : [point];
+    const cells=state.dragCells.length ? state.dragCells : [point];
     for(const p of cells){
-      const occupied = !!city.road(p.x,p.y)||!!city.building(p.x,p.y);
+      const road=city.road(p.x,p.y),building=city.building(p.x,p.y),zone=city.zone(p.x,p.y);
       const isRoad = state.tool==='road';
-      let valid = isRoad?!city.building(p.x,p.y) : state.tool==='bulldoze'?occupied : ['signal','stop','express','oneway','roundabout','normal'].includes(state.tool)?!!city.road(p.x,p.y):!occupied;
-      c.fillStyle=valid?(isRoad?'rgba(104,210,197,.4)':'rgba(142,239,194,.32)'):'rgba(245,108,93,.25)';
+      const paint=ZONES[state.tool];
+      const utility=BUILDINGS[state.tool]?.service;
+      const occupied=road||building||zone;
+      const valid=isRoad?!building&&!zone : paint?!road&&!building : utility?!occupied : state.tool==='bulldoze'?occupied:road;
+      c.fillStyle=valid?(paint?`${paint.color}52`:isRoad?'rgba(104,210,197,.4)':'rgba(142,239,194,.32)'):'rgba(245,108,93,.25)';
       c.fillRect(p.x*S+1,p.y*S+1,S-2,S-2);
-      c.strokeStyle=valid?'#adf3d8':'#f98f87';c.lineWidth=1.7;c.strokeRect(p.x*S+2,p.y*S+2,S-4,S-4);
-      if(!isRoad && valid && BUILDINGS[state.tool]){
+      c.strokeStyle=valid?(paint?.color??'#adf3d8'):'#f98f87';c.lineWidth=1.7;c.strokeRect(p.x*S+2,p.y*S+2,S-4,S-4);
+      if(valid && utility){
         c.fillStyle=BUILDINGS[state.tool].color;c.beginPath();c.arc((p.x+.5)*S,(p.y+.5)*S,5.5,0,Math.PI*2);c.fill();
       }
     }

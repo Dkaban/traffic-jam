@@ -2,11 +2,20 @@ export const COLS = 38;
 export const ROWS = 26;
 export const TILE = 32;
 export const BUILDINGS = {
-  house: { name: 'House', cars: 1, color: '#f1ac72', icon: '⌂', detail: 'A small household adds one commuter.' },
-  apartment: { name: 'Apartments', cars: 5, color: '#a3b9f1', icon: '▦', detail: 'Dense living adds five vehicles.' },
-  office: { name: 'Office', cars: 3, color: '#73d9cd', icon: '▥', detail: 'A busy workplace adds three vehicles.' },
-  shop: { name: 'Shops', cars: 2, color: '#f2c970', icon: '▤', detail: 'Local businesses add two delivery and shopper vehicles.' },
+  house: { population: 4 },
+  apartment: { population: 12 },
+  office: { jobs: 3, zone: 'industrial' },
+  shop: { jobs: 2, zone: 'commercial' },
+  factory: { jobs: 3, zone: 'industrial' },
+  power: { service: 'Power', name: 'Power plant', capacity: 8, color: '#f4bb6d' },
+  water: { service: 'Water', name: 'Water tower', capacity: 8, color: '#7ec9ed' },
 };
+export const ZONES = {
+  residential: { label: 'R', name: 'Residential', type: 'house', color: '#9aeca4' },
+  commercial: { label: 'C', name: 'Commercial', type: 'shop', color: '#8acaff' },
+  industrial: { label: 'I', name: 'Industrial', type: 'factory', color: '#ffd284' },
+};
+const STARTER_CAPACITY = 3;
 export const DIRECTIONS = [
   { dx: 0, dy: -1, id: 'n' }, { dx: 1, dy: 0, id: 'e' },
   { dx: 0, dy: 1, id: 's' }, { dx: -1, dy: 0, id: 'w' },
@@ -19,27 +28,39 @@ export class City {
   constructor(seed = true) {
     this.roads = new Map();
     this.buildings = new Map();
+    this.zones = new Map();
     this.nextId = 1;
     this.version = 0;
     if (seed) this.makeStarter();
   }
   road(x, y) { return this.roads.get(key(x, y)); }
   building(x, y) { return this.buildings.get(key(x, y)); }
+  zone(x, y) { return this.zones.get(key(x, y)); }
   addRoad(x, y) {
-    if (!inside(x, y) || this.road(x, y) || this.building(x, y)) return false;
+    if (!inside(x, y) || this.road(x, y) || this.building(x, y) || this.zone(x, y)) return false;
     this.roads.set(key(x, y), { x, y, modifier: 'none', direction: 'e' });
     this.version++;
     return true;
   }
   place(type, x, y) {
-    if (!(type in BUILDINGS) || !inside(x, y) || this.road(x, y) || this.building(x, y)) return false;
+    if (!Object.hasOwn(BUILDINGS, type) || !inside(x, y) || this.road(x, y) || this.building(x, y)) return false;
+    const zone = this.zone(x, y);
+    if (zone && ZONES[zone.type].type !== type) return false;
     this.buildings.set(key(x, y), { id: this.nextId++, type, x, y });
+    this.version++;
+    return true;
+  }
+  paintZone(type, x, y) {
+    if (!Object.hasOwn(ZONES, type) || !inside(x, y) || this.road(x, y) || this.building(x, y)) return false;
+    if (this.zone(x, y)?.type === type) return false;
+    this.zones.set(key(x, y), { type, x, y });
     this.version++;
     return true;
   }
   demolish(x, y) {
     const k = key(x, y);
-    const changed = this.roads.delete(k) || this.buildings.delete(k);
+    const zone = this.zones.delete(k);
+    const changed = this.roads.delete(k) || this.buildings.delete(k) || zone;
     if (changed) this.version++;
     return changed;
   }
@@ -58,7 +79,48 @@ export class City {
   connected(b) { return this.adjacentRoads(b.x, b.y).length > 0; }
   roadCount() { return this.roads.size; }
   buildingCount() { return this.buildings.size; }
-  demand() { return [...this.buildings.values()].reduce((sum, b) => sum + BUILDINGS[b.type].cars, 0); }
+  cityStats() {
+    let population = 0, jobs = 0, homes = 0, commercial = 0, industrial = 0;
+    let used = 0, power = STARTER_CAPACITY, water = STARTER_CAPACITY;
+    for (const b of this.buildings.values()) {
+      const type = BUILDINGS[b.type];
+      if (type.population) { population += type.population; homes++; }
+      if (type.jobs) jobs += type.jobs;
+      if (type.zone === 'commercial') commercial++;
+      if (type.zone === 'industrial') industrial++;
+      if (this.zone(b.x, b.y)) used++;
+      if (type.service && this.connected(b)) {
+        if (b.type === 'power') power += type.capacity;
+        else water += type.capacity;
+      }
+    }
+    return {
+      population, jobs, used, power, water,
+      demand: {
+        residential: Math.max(0, 1 + Math.floor(jobs / 2) - homes),
+        commercial: Math.max(0, Math.ceil(population / 6) - commercial),
+        industrial: Math.max(0, Math.ceil(population / 6) - industrial),
+      },
+    };
+  }
+  nextDevelopment(stats) {
+    let blocked = null;
+    for (const zone of this.zones.values()) {
+      if (this.building(zone.x, zone.y)) continue;
+      if (!this.connected(zone)) { blocked ??= 'Needs an adjacent road'; continue; }
+      if (!stats.demand[zone.type]) { blocked ??= `Waiting for ${zone.type} demand`; continue; }
+      const shortages = ['power', 'water'].filter(service => stats.used >= stats[service]);
+      if (shortages.length) {
+        return { blocked: `Needs more ${shortages.join(' and ')} capacity` };
+      }
+      return { zone };
+    }
+    return { blocked };
+  }
+  develop() {
+    const { zone } = this.nextDevelopment(this.cityStats());
+    return zone ? this.place(ZONES[zone.type].type, zone.x, zone.y) : false;
+  }
   neighbors(road) {
     return DIRECTIONS.flatMap(dir => {
       const n = this.road(road.x + dir.dx, road.y + dir.dy);
@@ -108,7 +170,10 @@ export class City {
     return null;
   }
   serialize() {
-    return { roads: [...this.roads.values()], buildings: [...this.buildings.values()], nextId: this.nextId };
+    return {
+      roads: [...this.roads.values()].map(road => ({ ...road })), buildings: [...this.buildings.values()],
+      zones: [...this.zones.values()], nextId: this.nextId,
+    };
   }
   static fromJSON(data) {
     if (!data || !Array.isArray(data.roads) || !Array.isArray(data.buildings)) throw new Error('Invalid city');
@@ -117,7 +182,12 @@ export class City {
       x: r.x, y: r.y, modifier: ['none', 'signal', 'stop', 'express', 'oneway', 'roundabout'].includes(r.modifier) ? r.modifier : 'none',
       direction: DIRECTIONS.some(d => d.id === r.direction) ? r.direction : 'e',
     });
-    for (const b of data.buildings) if (inside(b.x, b.y) && BUILDINGS[b.type] && !city.road(b.x, b.y)) city.buildings.set(key(b.x, b.y), { id: b.id, x: b.x, y: b.y, type: b.type });
+    for (const b of data.buildings) if (inside(b.x, b.y) && Object.hasOwn(BUILDINGS, b.type) && !city.road(b.x, b.y)) city.buildings.set(key(b.x, b.y), { id: b.id, x: b.x, y: b.y, type: b.type });
+    for (const zone of Array.isArray(data.zones) ? data.zones : []) {
+      if (!zone || !inside(zone.x, zone.y) || !Object.hasOwn(ZONES, zone.type) || city.road(zone.x, zone.y)) continue;
+      const building = city.building(zone.x, zone.y);
+      if (!building || building.type === ZONES[zone.type].type) city.zones.set(key(zone.x, zone.y), { x: zone.x, y: zone.y, type: zone.type });
+    }
     city.nextId = Math.max(Number(data.nextId) || 1, ...[...city.buildings.values()].map(b => b.id + 1), 1);
     city.version++;
     return city;

@@ -1,4 +1,4 @@
-import { City, BUILDINGS, DIRECTIONS, COLS, ROWS, key } from './world.js';
+import { City, BUILDINGS, DIRECTIONS, ZONES } from './world.js';
 import { Simulation } from './simulation.js';
 import { Renderer } from './render.js';
 
@@ -14,7 +14,7 @@ try {
 const sim = new Simulation(city);
 const state = { tool:'road', direction:'e', heatmap:false, hover:null, dragCells:[] };
 const undoStack = [];
-let painting = false, panning = false, spaceHeld = false, dragBefore = null, lastCell = null;
+let painting = null, panning = false, spaceHeld = false, dragBefore = null, lastCell = null;
 let lastPoint = null, speed = 1, paused = false, lastFrame = performance.now(), lastStats = 0;
 let toastTimer;
 
@@ -36,13 +36,25 @@ function undo() {
 function setTool(tool) {
   state.tool = tool;
   document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('selected',b.dataset.tool===tool));
+  $('#rotate-btn').hidden = tool !== 'oneway';
   $('#road-hint').textContent = tool==='road' ? '✎  Click & drag to draw roads'
-    : tool==='bulldoze' ? '⌫  Click a tile to remove it'
-    : BUILDINGS[tool] ? `✦  ${BUILDINGS[tool].name} · +${BUILDINGS[tool].cars} vehicle${BUILDINGS[tool].cars>1?'s':''}`
-    : tool==='oneway' ? `➜  Click a road · R rotates (${state.direction.toUpperCase()})`
-    : `✦  Click a road to apply ${tool==='normal'?'no modifier':tool}`;
+    : tool==='bulldoze' ? '⌫  Select a tile to remove it'
+    : ZONES[tool] ? `Paint ${ZONES[tool].name.toLowerCase()} zones beside roads`
+    : BUILDINGS[tool]?.service ? `Place a ${BUILDINGS[tool].name.toLowerCase()} beside a road`
+    : tool==='oneway' ? `➜  Select a road · Direction: ${state.direction.toUpperCase()}`
+    : 'Select a road to apply the tool';
 }
-document.querySelectorAll('[data-tool]').forEach(btn=>btn.addEventListener('click',()=>setTool(btn.dataset.tool)));
+const trafficToggle = $('#traffic-toggle');
+const trafficTools = $('#traffic-tools');
+function setTrafficPanel(open) {
+  trafficToggle.setAttribute('aria-expanded', String(open));
+  trafficTools.classList.toggle('tools-open', open);
+}
+trafficToggle.addEventListener('click', () => setTrafficPanel(trafficToggle.getAttribute('aria-expanded') !== 'true'));
+document.querySelectorAll('[data-tool]').forEach(btn=>btn.addEventListener('click',()=>{
+  setTool(btn.dataset.tool);
+  setTrafficPanel(false);
+}));
 const pos = event => {
   const r = canvas.getBoundingClientRect();
   return {x:event.clientX-r.left,y:event.clientY-r.top};
@@ -55,25 +67,34 @@ function between(a,b) {
   while(y!==b.y){y+=Math.sign(b.y-y);cells.push({x,y});}
   return cells;
 }
-function drawRoad(p) {
-  if (!p || !lastCell) return;
+function paint(tile) {
+  const changed = painting === 'road' ? city.addRoad(tile.x, tile.y) : city.paintZone(painting, tile.x, tile.y);
+  if (changed) state.dragCells.push(tile);
+}
+function stroke(p) {
   for(const cell of between(lastCell,p)) {
-    if(city.addRoad(cell.x,cell.y)) state.dragCells.push(cell);
+    paint(cell);
   }
   lastCell=p;
 }
 function commit(action) {
   const before=city.serialize();
+  const { x, y } = state.hover;
   let changed=false;
-  if(action==='bulldoze') changed=city.demolish(state.hover.x,state.hover.y);
-  else if(BUILDINGS[action]) changed=city.place(action,state.hover.x,state.hover.y);
-  else changed=city.setModifier(state.hover.x,state.hover.y,action,state.direction);
+  if(action==='bulldoze') changed=city.demolish(x,y);
+  else if(BUILDINGS[action]?.service) {
+    if (city.zone(x,y) || city.road(x,y) || city.building(x,y)) { toast('That tile is occupied'); return; }
+    changed=city.place(action,x,y);
+    if (changed && !city.connected({x,y})) toast('Connect this utility to an adjacent road');
+  } else {
+    if (!city.road(x,y)) { toast('Place modifiers on a road'); return; }
+    changed=city.setModifier(x,y,action==='normal'?'none':action,state.direction);
+  }
   if(changed){
     remember(before);
-    if(action==='bulldoze' || !BUILDINGS[action]) sim.networkChanged();
-    else sim.syncCars();
-  } else if(BUILDINGS[action] && (city.road(state.hover.x,state.hover.y)||city.building(state.hover.x,state.hover.y))) toast('That tile is occupied');
-  else if(!BUILDINGS[action] && action!=='bulldoze' && !city.road(state.hover.x,state.hover.y)) toast('Place modifiers on a road');
+    if (!BUILDINGS[action]?.service) sim.networkChanged();
+    updateStats();
+  }
 }
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.addEventListener('pointerdown',e=>{
@@ -85,10 +106,10 @@ canvas.addEventListener('pointerdown',e=>{
   state.hover=tile;
   if(!tile) return;
   canvas.setPointerCapture(e.pointerId);
-  if(state.tool==='road') {
+  if(state.tool==='road' || ZONES[state.tool]) {
     dragBefore=city.serialize();
-    state.dragCells=[];painting=true;lastCell=tile;
-    if(city.addRoad(tile.x,tile.y))state.dragCells.push(tile);
+    state.dragCells=[];painting=state.tool;lastCell=tile;
+    paint(tile);
   } else commit(state.tool);
 });
 canvas.addEventListener('pointermove',e=>{
@@ -101,15 +122,22 @@ canvas.addEventListener('pointermove',e=>{
   }
   const tile=renderer.screenToGrid(p.x,p.y);
   state.hover=tile;
-  if(painting && tile)drawRoad(tile);
+  if(painting && tile)stroke(tile);
   lastPoint=p;
 });
-function pointerEnd(){
+function pointerEnd(event){
   if(painting){
-    painting=false;lastCell=null;state.dragCells=[];
-    if(dragBefore && JSON.stringify(dragBefore)!==JSON.stringify(city.serialize())){
-      remember(dragBefore);sim.networkChanged();
+    if (event?.type === 'pointerup') {
+      const p = pos(event);
+      const tile = renderer.screenToGrid(p.x,p.y);
+      if (tile) stroke(tile);
     }
+    if(state.dragCells.length){
+      remember(dragBefore);
+      if (painting === 'road') sim.networkChanged();
+      updateStats();
+    }
+    painting=null;lastCell=null;state.dragCells=[];
     dragBefore=null;
   }
   panning=false;lastPoint=null;$('#canvas-shell').classList.remove('panning');
@@ -155,39 +183,24 @@ $('#reset-btn').addEventListener('click',()=>{
   if(!window.confirm('Start a new empty city? This replaces your saved map.')) return;
   remember(city.serialize());city=new City(false);sim.reset(city);save();renderer.fit();updateZoom();toast('New city! Draw your first road.');
 });
-$('#grow-btn').addEventListener('click',()=>{
-  const candidates=[];
-  for(let y=1;y<ROWS-1;y++)for(let x=1;x<COLS-1;x++)if(!city.road(x,y)&&!city.building(x,y)&&city.adjacentRoads(x,y).length){
-    // Avoid packing every patch with a building. Plenty of room to breathe.
-    const crowded=[[1,0],[-1,0],[0,1],[0,-1]].filter(([dx,dy])=>city.building(x+dx,y+dy)).length;
-    if(!crowded)candidates.push({x,y});
-  }
-  if(!candidates.length){toast('No space nearby — draw more roads first!');return;}
-  const before=city.serialize();let count=0;
-  const types=['house','house','apartment','office','shop'];
-  while(candidates.length && count<7){
-    const index=Math.floor(Math.random()*candidates.length);
-    const p=candidates.splice(index,1)[0];
-    if(city.building(p.x,p.y))continue;
-    const type=types[Math.floor(Math.random()*types.length)];
-    if(city.place(type,p.x,p.y))count++;
-    for(let i=candidates.length-1;i>=0;i--)if(Math.abs(candidates[i].x-p.x)+Math.abs(candidates[i].y-p.y)<=1)candidates.splice(i,1);
-  }
-  if(count){remember(before);sim.syncCars();toast(`${count} buildings added! Prepare for more traffic.`);}
-});
+function rotateOneWay() {
+  const current=DIRECTIONS.findIndex(d=>d.id===state.direction);
+  state.direction=DIRECTIONS[(current+1)%4].id;
+  const arrows={n:'↑',e:'➜',s:'↓',w:'←'};
+  $('.oneway-icon').textContent=arrows[state.direction];
+  $('#rotate-btn').textContent=`Rotate one-way · ${state.direction.toUpperCase()}`;
+  if(state.tool==='oneway')setTool('oneway');
+}
+$('#rotate-btn').addEventListener('click', rotateOneWay);
 window.addEventListener('keydown',e=>{
-  if(e.target instanceof HTMLElement && ['INPUT','TEXTAREA'].includes(e.target.tagName))return;
+  if(help.open || e.target instanceof HTMLElement && ['INPUT','TEXTAREA'].includes(e.target.tagName))return;
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();undo();return;}
-  if(e.key===' '){spaceHeld=true;e.preventDefault();return;}
-  const mapping={'1':'road','2':'house','3':'apartment','4':'office','5':'shop','6':'signal','7':'stop','8':'express','9':'oneway','0':'roundabout','x':'bulldoze'};
-  if(mapping[e.key.toLowerCase()])setTool(mapping[e.key.toLowerCase()]);
-  if(e.key.toLowerCase()==='r'){
-    const current=DIRECTIONS.findIndex(d=>d.id===state.direction);
-    state.direction=DIRECTIONS[(current+1)%4].id;
-    const arrows={n:'↑',e:'➜',s:'↓',w:'←'};
-    $('.oneway-icon').textContent=arrows[state.direction];
-    if(state.tool==='oneway')setTool('oneway');
+  if(e.key===' ' && !(e.target instanceof HTMLButtonElement && e.target.matches(':focus-visible'))){
+    spaceHeld=true;e.preventDefault();return;
   }
+  const mapping={'1':'road','2':'residential','3':'commercial','4':'industrial','5':'power','w':'water','6':'signal','7':'stop','8':'express','9':'oneway','0':'roundabout','x':'bulldoze'};
+  if(mapping[e.key.toLowerCase()])setTool(mapping[e.key.toLowerCase()]);
+  if(e.key.toLowerCase()==='r')rotateOneWay();
   if(e.key==='Escape' && !help.open)setTool('road');
 });
 window.addEventListener('keyup',e=>{if(e.key===' ')spaceHeld=false;});
@@ -195,21 +208,32 @@ window.addEventListener('blur',()=>{spaceHeld=false;pointerEnd();});
 
 function updateStats(){
   const s=sim.stats();
+  const cityStats=city.cityStats();
+  const development=city.nextDevelopment(cityStats);
   $('#stat-flow').innerHTML=`${s.flow}<span>%</span>`;
-  $('#stat-buildings').textContent=s.buildings;
+  $('#stat-population').textContent=cityStats.population.toLocaleString();
   $('#stat-cars').textContent=s.vehicles;
   $('#stat-queued').textContent=s.queued;
   $('#stat-trips').textContent=s.trips.toLocaleString();
-  $('#city-message').textContent=!s.roads?'Start with a road. Click and drag to draw one.'
-    :s.buildings<2?'Place a few buildings beside your roads to bring the city to life.'
-    :s.queued>=Math.max(4,s.active*.28)?'Rush hour! Try fast lanes or new connections to reduce queues.'
-    :s.active<s.vehicles?'Some buildings are disconnected. Connect them to the roads.'
-    :s.trips<5?'The city is waking up. Cars are finding their way around.'
-    :`${s.trips.toLocaleString()} completed trips. Keep your city flowing!`;
+  for (const type of Object.keys(ZONES)) {
+    const output=$(`#demand-${type}`);
+    output.textContent=cityStats.demand[type];
+    output.parentElement.classList.toggle('no-demand', !cityStats.demand[type]);
+  }
+  for (const service of ['power', 'water']) {
+    $(`#stat-${service}`).textContent=`${cityStats.used} / ${cityStats[service]}`;
+    $(`#${service}-status`).classList.toggle('at-capacity', cityStats.used >= cityStats[service]);
+  }
+  $('#city-message').textContent = development.blocked ||
+    (!s.roads ? 'Draw a road to start your city.'
+      : development.zone ? `${ZONES[development.zone.type].name} development is ready.`
+      : !cityStats.population ? 'Zone residential land beside a road.'
+      : s.queued >= Math.max(4,s.active*.28) ? 'Traffic is backing up. Try a faster route or a new connection.'
+      : 'Zone more land where there’s demand.');
 }
 function frame(now){
   const dt=Math.min((now-lastFrame)/1000,.05);lastFrame=now;
-  if(!paused){for(let i=0;i<speed;i++)sim.update(dt);}
+  if(!paused && !painting){for(let i=0;i<speed;i++)if(sim.update(dt))save();}
   renderer.draw(city,sim,state);
   if(now-lastStats>250){updateStats();lastStats=now;}
   requestAnimationFrame(frame);

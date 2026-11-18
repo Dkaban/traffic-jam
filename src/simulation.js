@@ -2,79 +2,96 @@ import { BUILDINGS, key } from './world.js';
 
 const COLORS = ['#ffca79','#f1a1a7','#80d8e5','#b7a5ee','#f6f3d7','#7cd6b0','#ec975f','#9bb8ff'];
 const pick = array => array[Math.floor(Math.random() * array.length)];
-const shuffle = array => [...array].sort(() => Math.random() - .5);
+const GROWTH_INTERVAL = 3;
+const DEPARTURE_INTERVAL = .65;
+const HOME_INTERVAL = 5;
 
 export class Simulation {
   constructor(city) {
-    this.city = city;
-    this.cars = [];
-    this.nextId = 0;
-    this.time = 0;
-    this.completed = 0;
-    this.totalTripTime = 0;
-    this.occupancy = new Map();
-    this.syncCars();
+    this.reset(city);
   }
   reset(city) {
     this.city = city; this.cars = []; this.nextId = 0; this.time = 0;
     this.completed = 0; this.totalTripTime = 0;
-    this.syncCars();
-  }
-  syncCars() {
-    const buildings = new Map([...this.city.buildings.values()].map(b => [b.id,b]));
-    this.cars = this.cars.filter(c => buildings.has(c.owner) && c.slot < BUILDINGS[buildings.get(c.owner).type].cars);
-    for (const b of buildings.values()) {
-      const amount = BUILDINGS[b.type].cars;
-      for (let slot = 0; slot < amount; slot++) {
-        if (this.cars.some(c => c.owner === b.id && c.slot === slot)) continue;
-        const available = this.city.adjacentRoads(b.x, b.y);
-        const road = available.length ? pick(available) : null;
-        this.cars.push({ id: this.nextId++, owner: b.id, slot, road: road ? key(road.x, road.y) : null,
-          path: [], node: 0, t: 0, idle: Math.random() * 3.5, speed: .85 + Math.random() * .38,
-          color: pick(COLORS), facing: 0, wait: false, stopKey: null, stopCountdown: 0, tripTime: 0 });
-      }
-    }
+    this.occupancy = new Map();
+    this.nextGrowth = GROWTH_INTERVAL;
+    this.nextDeparture = DEPARTURE_INTERVAL;
+    this.homes = [];
+    this.destinationRoads = new Map();
+    this.homeIndex = 0;
+    this.lastDeparture = new Map();
+    this.cityVersion = -1;
   }
   networkChanged() {
-    this.syncCars();
-    for (const car of this.cars) {
-      const b = [...this.city.buildings.values()].find(b => b.id === car.owner);
-      if (!b) continue;
-      const at = car.path[car.node] || (car.road && this.city.roads.get(car.road));
-      const road = (at && this.city.road(at.x, at.y)) || this.city.adjacentRoads(b.x, b.y)[0];
-      car.road = road ? key(road.x, road.y) : null;
-      car.path = []; car.node = 0; car.t = 0; car.idle = .2 + Math.random();
-      car.stopKey = null; car.stopCountdown = 0;
+    this.cars = this.cars.filter(car => {
+      if (this.city.building(car.home.x, car.home.y) !== car.home ||
+          this.city.building(car.destination.x, car.destination.y) !== car.destination) return false;
+      const remaining = car.path.slice(car.node);
+      return remaining.every((road, i) => this.city.road(road.x, road.y) === road &&
+        (!i || this.city.neighbors(remaining[i - 1]).includes(road)));
+    });
+    this.getOccupancy();
+  }
+  indexTripEndpoints() {
+    this.homes = [];
+    this.destinationRoads.clear();
+    for (const building of this.city.buildings.values()) {
+      const type = BUILDINGS[building.type];
+      if (type.population && this.city.connected(building)) this.homes.push(building);
+      if (type.jobs) {
+        for (const road of this.city.adjacentRoads(building.x, building.y)) {
+          this.destinationRoads.set(road, building);
+        }
+      }
     }
+    for (const id of this.lastDeparture.keys()) {
+      if (this.time - this.lastDeparture.get(id) >= HOME_INTERVAL) this.lastDeparture.delete(id);
+    }
+    this.cityVersion = this.city.version;
   }
   getOccupancy() {
     const occupancy = new Map();
     for (const car of this.cars) {
-      const p = car.path.length ? car.path[Math.min(car.node + (car.t >= .5 ? 1 : 0), car.path.length - 1)] : (car.road && this.city.roads.get(car.road));
-      if (p) { const k = key(p.x, p.y); occupancy.set(k, (occupancy.get(k) || 0) + 1); }
+      const p = car.path[Math.min(car.node + (car.t >= .5 ? 1 : 0), car.path.length - 1)];
+      const k = key(p.x, p.y);
+      occupancy.set(k, (occupancy.get(k) || 0) + 1);
     }
     this.occupancy = occupancy;
     return occupancy;
   }
-  planTrip(car, occupancy) {
-    const start = this.city.roads.get(car.road);
-    const home = [...this.city.buildings.values()].find(b => b.id === car.owner);
-    const startRoad = start || (home && this.city.adjacentRoads(home.x, home.y)[0]);
-    if (!startRoad) { car.road = null; car.idle = 2; return; }
-    car.road = key(startRoad.x,startRoad.y);
-    const destinations = shuffle([...this.city.buildings.values()].filter(b => b.id !== car.owner && this.city.connected(b)));
-    for (const target of destinations) {
-      let best = null;
-      for (const destRoad of shuffle(this.city.adjacentRoads(target.x,target.y))) {
-        const route = this.city.findRoute(startRoad, destRoad, occupancy);
-        if (route && route.length >= 2 && (!best || route.length < best.length)) best = route;
-      }
-      if (best) {
-        car.path = best; car.node = 0; car.t = 0; car.tripTime = 0; car.stopKey = null;
-        return;
+  startTrip() {
+    if (this.cityVersion !== this.city.version) this.indexTripEndpoints();
+    if (!this.homes.length || !this.destinationRoads.size) return;
+    const home = this.homes[this.homeIndex % this.homes.length];
+    this.homeIndex = (this.homeIndex + 1) % this.homes.length;
+    if (this.time - (this.lastDeparture.get(home.id) ?? -Infinity) < HOME_INTERVAL ||
+        this.cars.some(car => car.home === home)) return;
+
+    // Find reachable destinations in one pass per departure. Route to only the chosen one.
+    const origins = this.city.adjacentRoads(home.x, home.y)
+      .filter(road => (this.occupancy.get(key(road.x, road.y)) || 0) < 2);
+    const reachable = new Map(origins.map(road => [road, road]));
+    const queue = [...origins];
+    const targets = [];
+    for (let i = 0; i < queue.length; i++) {
+      const road = queue[i];
+      if (this.destinationRoads.has(road) && reachable.get(road) !== road) targets.push(road);
+      for (const next of this.city.neighbors(road)) {
+        if (reachable.has(next)) continue;
+        reachable.set(next, reachable.get(road));
+        queue.push(next);
       }
     }
-    car.path = []; car.idle = 2 + Math.random() * 2;
+    if (!targets.length) return;
+    const target = pick(targets);
+    const path = this.city.findRoute(reachable.get(target), target, this.occupancy);
+    if (!path) return;
+    this.lastDeparture.set(home.id, this.time);
+    this.cars.push({
+      id: this.nextId++, home, destination: this.destinationRoads.get(target),
+      path, node: 0, t: 0, speed: .85 + Math.random() * .38,
+      color: pick(COLORS), facing: 0, wait: false, stopKey: null, stopCountdown: 0, tripTime: 0,
+    });
   }
   canEnter(car, next, occupancy) {
     const previous = car.path[car.node];
@@ -98,31 +115,27 @@ export class Simulation {
   update(dt) {
     dt = Math.min(Math.max(dt, 0), .08);
     this.time += dt;
-    this.syncCars();
+    let developed = false;
+    if (this.time >= this.nextGrowth) {
+      this.nextGrowth += GROWTH_INTERVAL;
+      developed = this.city.develop();
+    }
+    if (this.time >= this.nextDeparture) {
+      this.nextDeparture += DEPARTURE_INTERVAL;
+      this.startTrip();
+    }
     const occupancy = this.getOccupancy();
-    const cars = [...this.cars].sort(() => Math.random() - .5);
-    for (const car of cars) {
+    const finished = new Set();
+    for (const car of this.cars) {
       car.wait = false;
-      if (!car.road) {
-        const b = [...this.city.buildings.values()].find(b => b.id === car.owner);
-        const available = b && this.city.adjacentRoads(b.x,b.y);
-        if (available && available.length) car.road = key(available[0].x, available[0].y);
-        else continue;
-      }
-      if (car.idle > 0) { car.idle -= dt; continue; }
-      if (!car.path.length) { this.planTrip(car, occupancy); continue; }
       const next = car.path[car.node + 1];
       if (!next) {
-        car.road = key(car.path[car.node].x,car.path[car.node].y);
-        car.path = []; car.t = 0; car.idle = .9 + Math.random() * 1.2;
         this.completed++; this.totalTripTime += car.tripTime;
+        finished.add(car);
         continue;
       }
-      if (!this.city.road(next.x,next.y)) { car.path = []; car.idle = .5; continue; }
       car.tripTime += dt;
       if (car.stopCountdown > 0) car.stopCountdown = Math.max(0, car.stopCountdown - dt);
-      const from = car.path[car.node];
-      const dirX = next.x - from.x, dirY = next.y - from.y;
       // Heading is calculated from the curved road trajectory in position().
       if (car.t < .42 && !this.canEnter(car, next, occupancy)) { car.wait = true; continue; }
       const multiplier = next.modifier === 'express' ? 1.65 : next.modifier === 'roundabout' ? 1.18 : 1;
@@ -130,11 +143,12 @@ export class Simulation {
       if (car.t >= 1) {
         car.node++;
         car.t = 0;
-        car.road = key(next.x,next.y);
         car.stopCountdown = 0;
       }
     }
+    if (finished.size) this.cars = this.cars.filter(car => !finished.has(car));
     this.getOccupancy();
+    return developed;
   }
   // Round corners by blending the incoming and outgoing road directions.
   // Each segment keeps its endpoints at tile centers, but uses continuous
@@ -170,15 +184,13 @@ export class Simulation {
       }
       if (a) return { x:a.x, y:a.y, angle:car.facing };
     }
-    const r = this.city.roads.get(car.road);
-    return r ? {x:r.x,y:r.y,angle:car.facing} : null;
+    return null;
   }
   stats() {
-    const active = this.cars.filter(c => c.road).length;
-    const moving = this.cars.filter(c => c.path.length && !c.wait && c.idle <= 0).length;
     const queued = this.cars.filter(c => c.wait).length;
+    const active = this.cars.length;
     return {
-      vehicles: this.cars.length, active, moving, queued,
+      vehicles: active, active, moving: active - queued, queued,
       buildings: this.city.buildingCount(), roads: this.city.roadCount(), trips: this.completed,
       flow: active ? Math.max(0, Math.round((1 - queued / active) * 100)) : 100,
       avgTrip: this.completed ? (this.totalTripTime / this.completed).toFixed(1) : '—',
